@@ -260,7 +260,9 @@ class Instruction():
 
 	names = {
 		0x01: 'load',
+		0x02: 'assign',
 		0x03: 'clear',
+		0x08: 'var',
 		0x0F: 'return',
 	}
 
@@ -308,10 +310,19 @@ class Instruction():
 				desc = 'var ' + typ + ' #' + str(pos)
 			else:
 				desc = 'const ' + typ + ' <' + str(val) + '>'
+		elif self.type == 0x02:
+			if self.data[1:] != b'\x42\x00\x00\x00':
+				raise ParseError('Unexpected assign instr {}'.format(self))
+			desc = ''
 		elif self.type == 0x03:
 			if self.data[1:] != b'\x19\x00\x00\x00':
 				raise ParseError('Unexpected clear instr {}'.format(self))
 			desc = ''
+		elif self.type == 0x08:
+			if self.data[1] != 0x2b:
+				raise ParseError('Unexpected var instr {}'.format(self))
+			vid = parseInt(self.data[2:])
+			desc = '#' + str(vid)
 		else:
 			desc = ''
 		

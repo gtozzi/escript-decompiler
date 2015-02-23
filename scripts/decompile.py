@@ -183,7 +183,7 @@ class ECLFile:
 
 		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
 		for ir in self.instr.instr:
-			print(ir)
+			print(ir.descr(self.const, self.usages))
 		print()
 
 		print('*** CONSTANTS ***')
@@ -234,7 +234,7 @@ class UsageBlockFunction():
 		self.parm = int(data[33])
 
 	def __repr__(self):
-		return self.name + '(<' + str(self.parm) + '>)'
+		return self.name + '(' + str(self.parm) + 'p)'
 
 
 class InstructionsBlock(Block):
@@ -259,25 +259,78 @@ class Instruction():
 	''' A single instruction '''
 
 	names = {
-		0x01: 'movw',
-		0x03: 'run',
+		0x01: 'load',
+		0x03: 'clear',
 		0x0F: 'return',
 	}
 
 	def __init__(self, data):
+		self.log = logging.getLogger('instr')
 		if len(data) != 5:
 			raise ParseError('An instruction must be 5 bytes long')
 		self.data = data
+		self.type = data[0] if data[1] != 0x2f else 'run'
+
+	def descr(self, const, usages):
+		''' Returns instruction's description
+		@param const: The constants block in use
+		@param usages: The usages list in use
+		'''
+		base = repr(self)
+
+		if self.type == 'run':
+			if self.data[2:4] != b'\x00\x00':
+				raise ParseError('Unexpected run instr {}'.format(self))
+			uid = int(self.data[4])
+			fid = int(self.data[0])
+			us = usages[uid]
+			desc = us.name + ':' + str(us.func[fid])
+		elif self.type == 0x01:
+			pos = parseInt(self.data[2:])
+			typ = int(self.data[1])
+			if typ >= 0x32:
+				typ = typ - 0x32
+
+			if typ == 0:
+				typ = 'int'
+				val = const.getInt(pos)
+			elif typ == 1:
+				typ = 'float'
+				val = const.getFloat(pos)
+			elif typ == 2:
+				typ = 'str'
+				val = const.getStr(pos)
+			else:
+				self.log.critical(repr(self))
+				raise ParseError('Unknown type {}'.format(typ))
+
+			if int(self.data[1]) >= 0x32:
+				desc = 'var ' + typ + ' #' + str(pos)
+			else:
+				desc = 'const ' + typ + ' <' + str(val) + '>'
+		elif self.type == 0x03:
+			if self.data[1:] != b'\x19\x00\x00\x00':
+				raise ParseError('Unexpected clear instr {}'.format(self))
+			desc = ''
+		else:
+			desc = ''
+		
+		if desc:
+			return base + ': ' + desc
+		else:
+			return base
 
 	def __repr__(self):
 		hx = ' '.join(['{:02X}'.format(c) for c in self.data])
-		hb = ' '.join(['{:08b}'.format(c) for c in self.data])
-		try:
-			name = self.names[int(self.data[0])]
-		except KeyError:
-			name = '?'
-		#return hb + ' - ' + '{:>6s}'.format(name)
-		return hb + ' - ' + hx
+		#hb = ' '.join(['{:08b}'.format(c) for c in self.data[:2]])
+		if self.type == 'run':
+			name = 'run'
+		else:
+			try:
+				name = self.names[int(self.type)]
+			except KeyError:
+				name = '?'
+		return hx + ' - ' + '{:>6s}'.format(name)
 
 
 class ConstantsBlock(Block):
@@ -288,6 +341,14 @@ class ConstantsBlock(Block):
 		innerSize = parseInt(data[:4])
 		if innerSize != len(data) - 4:
 			raise ParseError('Unexpected block inner size')
+
+	def getInt(self, pos):
+		''' Returns integer at given position '''
+		return parseInt(self.data[pos+4 : pos+4+4])
+
+	def getStr(self, pos):
+		''' Returns string at given position '''
+		return parseStr(self.data[pos+4:])
 
 	def __repr__(self):
 		hx = ['{:02X}'.format(c) for c in self.data]

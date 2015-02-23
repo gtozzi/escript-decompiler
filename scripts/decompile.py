@@ -6,7 +6,7 @@ EScript decompiler for binary ECL files version 2 (POL092)
 
 import os, sys
 import logging
-import binascii
+import string
 
 
 def parseInt(val):
@@ -108,7 +108,7 @@ class ECLFile:
 				self.log.critical('Unsupported block %s', block)
 				sys.exit(1)
 
-			self.pos += 6 + len(block)
+			self.pos += 6 + block.size()
 			if self.pos == len(self.buf):
 				# EOF
 				break
@@ -168,20 +168,14 @@ class ECLFile:
 
 		print()
 
-		print('*** INSTRUCTIONS ***')
-		hx = ['{:02X}'.format(c) for c in self.instr.getData()]
-		i = 0
-		for h in hx:
-			i += 1
-			if not i % 16:
-				end = '\n'
-			elif not i % 4:
-				end = '  '
-			else:
-				end = ' '
-			print(h, end=end)
+		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
+		for ir in self.instr.instr:
+			print(ir)
 
 		print()
+
+		print('*** CONSTANTS ***')
+		print(self.const)
 
 
 class Block:
@@ -196,7 +190,7 @@ class Block:
 		self.code = code
 		self.data = data
 
-	def __len__(self):
+	def size(self):
 		''' Returns block length (excluding header) '''
 		return len(self.data)
 
@@ -239,9 +233,36 @@ class InstructionsBlock(Block):
 		if innerSize != len(data) - 4:
 			raise ParseError('Unexpected block inner size')
 
-	def getData(self):
-		''' Returns inner data, temporary method '''
-		return self.data[4:]
+		inner = data[4:]
+		if len(inner) % 5:
+			raise ParseError('Instructions data size is not a multiple of 5')
+
+		self.instr = [Instruction(inner[i:i+5]) for i in range(0, len(inner), 5)]
+
+	def __len__(self):
+		return len(self.instr)
+
+class Instruction():
+	''' A single instruction '''
+
+	names = {
+		0x01: 'movw',
+		0x03: 'run',
+		0x0F: 'return',
+	}
+
+	def __init__(self, data):
+		if len(data) != 5:
+			raise ParseError('An instruction must be 5 bytes long')
+		self.data = data
+
+	def __repr__(self):
+		hx = ' '.join(['{:02X}'.format(c) for c in self.data])
+		try:
+			name = self.names[int(self.data[0])]
+		except KeyError:
+			name = '?'
+		return hx + ' - ' + '{:>6s}'.format(name)
 
 
 class ConstantsBlock(Block):
@@ -252,6 +273,35 @@ class ConstantsBlock(Block):
 		innerSize = parseInt(data[:4])
 		if innerSize != len(data) - 4:
 			raise ParseError('Unexpected block inner size')
+
+	def __repr__(self):
+		hx = ['{:02X}'.format(c) for c in self.data]
+		ex = len(hx) % 16
+		if ex:
+			hx.extend(['  '] * ex)
+
+		ret = ''
+		row = ''
+		i = 1
+		for x in hx:
+			ret += x
+			if x != '  ':
+				char = chr(self.data[i-1])
+			else:
+				char = ' '
+			if char not in string.printable:
+				char = '.'
+			row += char
+			if not i % 16:
+				ret += '  ' + row + '\n'
+				row = ''
+			elif not i % 4:
+				ret += '  '
+				row += ' '
+			else:
+				ret += ' '
+			i += 1
+		return ret
 
 
 class ParseError(RuntimeError):

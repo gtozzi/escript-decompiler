@@ -31,6 +31,15 @@ def parseInt(val):
 		pos += 1
 	return ret * mul
 
+def parseFloat(val):
+	''' Parses a float in binary format '''
+	if len(val) != 8:
+		raise ValueError("Floats must be 8 bytes long")
+	#FIXME: This is absolutely wrong!!
+	mant = parseInt(val[:6])
+	exp = parseInt(val[6:])
+	return str(mant) + '/' + str(exp)
+
 def parseStr(val, fixed=False):
 	''' Parses a string in binary format. NULL terminated
 	
@@ -369,12 +378,17 @@ class ConstantsBlock(Block):
 		''' Returns integer at given position '''
 		return parseInt(self.data[pos+4 : pos+4+4])
 
+	def getFloat(self, pos):
+		''' Returns a float at given position '''
+		return parseFloat(self.data[pos+4 : pos+4+8])
+
 	def getStr(self, pos):
 		''' Returns string at given position '''
 		return parseStr(self.data[pos+4:])
 
 	def __repr__(self):
-		hx = ['{:02X}'.format(c) for c in self.data]
+		inner = self.data[4:]
+		hx = ['{:02X}'.format(c) for c in inner]
 		ex = len(hx) % 16
 		if ex:
 			hx.extend(['  '] * ex)
@@ -385,7 +399,7 @@ class ConstantsBlock(Block):
 		for x in hx:
 			ret += x
 			if x != '  ':
-				char = chr(self.data[i-1])
+				char = chr(inner[i-1])
 			else:
 				char = ' '
 			if char not in string.printable:

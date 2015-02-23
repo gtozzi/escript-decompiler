@@ -66,6 +66,8 @@ class ECLFile:
 		self.instr = None
 		# Will contain the parses constants block
 		self.const = None
+		# Will contain the program block definition
+		self.program = None
 
 		with open(inFile, 'rb') as f:
 			while True:
@@ -104,6 +106,11 @@ class ECLFile:
 					self.log.critical('Duplicate constants block found')
 					sys.exit(1)
 				self.const = block
+			elif isinstance(block, ProgramBlock):
+				if self.program is not None:
+					self.log.critical('Duplicate program block found')
+					sys.exit(1)
+				self.program = block
 			else:
 				self.log.critical('Unsupported block %s', block)
 				sys.exit(1)
@@ -155,6 +162,8 @@ class ECLFile:
 			return InstructionsBlock(data)
 		elif code == 3:
 			return ConstantsBlock(data)
+		elif code == 4:
+			return ProgramBlock(data)
 		else:
 			raise ParseError('Unsupported block code %d', code)
 
@@ -165,17 +174,21 @@ class ECLFile:
 		for u in self.usages:
 			print('0x{:02X} {}'.format(i, u))
 			i += 1
-
 		print()
+
+		if self.program:
+			print('*** PROGRAM ***')
+			print('{} arguments'.format(self.program.args))
+			print()
 
 		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
 		for ir in self.instr.instr:
 			print(ir)
-
 		print()
 
 		print('*** CONSTANTS ***')
 		print(self.const)
+		print()
 
 
 class Block:
@@ -258,11 +271,13 @@ class Instruction():
 
 	def __repr__(self):
 		hx = ' '.join(['{:02X}'.format(c) for c in self.data])
+		hb = ' '.join(['{:08b}'.format(c) for c in self.data])
 		try:
 			name = self.names[int(self.data[0])]
 		except KeyError:
 			name = '?'
-		return hx + ' - ' + '{:>6s}'.format(name)
+		#return hb + ' - ' + '{:>6s}'.format(name)
+		return hb + ' - ' + hx
 
 
 class ConstantsBlock(Block):
@@ -304,6 +319,16 @@ class ConstantsBlock(Block):
 		return ret
 
 
+class ProgramBlock(Block):
+	''' A block type 04: program '''
+
+	def __init__(self, data):
+		super().__init__(4, data)
+		self.args = int(self.data[0])
+		if data[1:] != b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00':
+			raise ParseError('Unexpected data in bytes 2-16 of block: %s', data[1:])
+
+
 class ParseError(RuntimeError):
 	pass
 
@@ -311,7 +336,7 @@ class ParseError(RuntimeError):
 if __name__ == '__main__':
 	import argparse
 
-	logging.basicConfig(level=logging.DEBUG)
+	logging.basicConfig(level=logging.INFO)
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument('ecl_file', help='The compiled script')

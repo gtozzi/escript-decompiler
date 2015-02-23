@@ -280,51 +280,63 @@ class Instruction():
 		'''
 		base = repr(self)
 
-		if self.type == 'run':
-			if self.data[2:4] != b'\x00\x00':
-				raise ParseError('Unexpected run instr {}'.format(self))
-			uid = int(self.data[4])
-			fid = int(self.data[0])
-			us = usages[uid]
-			desc = us.name + ':' + str(us.func[fid])
-		elif self.type == 0x01:
-			pos = parseInt(self.data[2:])
-			typ = int(self.data[1])
-			if typ >= 0x32:
-				typ = typ - 0x32
+		try:
+			if self.type == 'run':
+				if self.data[2:4] != b'\x00\x00':
+					raise ParseError('Unexpected run instr {}'.format(self))
+				uid = int(self.data[4])
+				fid = int(self.data[0])
+				us = usages[uid]
+				desc = us.name + ':' + str(us.func[fid])
+			elif self.type == 0x01:
+				pos = parseInt(self.data[2:])
+				typ = int(self.data[1])
+				if typ >= 0x32:
+					typ = typ - 0x32
 
-			if typ == 0:
-				typ = 'int'
-				val = const.getInt(pos)
-			elif typ == 1:
-				typ = 'float'
-				val = const.getFloat(pos)
-			elif typ == 2:
-				typ = 'str'
-				val = const.getStr(pos)
-			else:
-				self.log.critical(repr(self))
-				raise ParseError('Unknown type {}'.format(typ))
+				if typ == 0:
+					typ = 'int'
+					val = const.getInt(pos)
+				elif typ == 1:
+					typ = 'float'
+					val = const.getFloat(pos)
+				elif typ == 2:
+					typ = 'str'
+					val = const.getStr(pos)
+				else:
+					self.log.critical(repr(self))
+					raise ParseError('Unknown type {}'.format(typ))
 
-			if int(self.data[1]) >= 0x32:
-				desc = 'var ' + typ + ' #' + str(pos)
+				if int(self.data[1]) >= 0x32:
+					desc = 'var ' + typ + ' #' + str(pos)
+				else:
+					desc = 'const ' + typ + ' <' + str(val) + '>'
+			elif self.type == 0x02:
+				opt = self.data[1]
+				if opt == 0x42:
+					if self.data[2:] != '\x00\x00\x00':
+						raise ParseError('Unexpected assign instr {}'.format(self))
+					desc = 'W1 := W2'
+				elif opt == 0x38:
+					desc = 'program parm ' + const.getStr(parseInt(self.data[2:]))
+				else:
+					raise ParseError('Unexpected assign instr {}'.format(self))
+			elif self.type == 0x03:
+				if self.data[1:] != b'\x19\x00\x00\x00':
+					raise ParseError('Unexpected clear instr {}'.format(self))
+				desc = ''
+			elif self.type == 0x08:
+				if self.data[1] != 0x2b:
+					raise ParseError('Unexpected var instr {}'.format(self))
+				vid = parseInt(self.data[2:])
+				desc = '#' + str(vid)
 			else:
-				desc = 'const ' + typ + ' <' + str(val) + '>'
-		elif self.type == 0x02:
-			if self.data[1:] != b'\x42\x00\x00\x00':
-				raise ParseError('Unexpected assign instr {}'.format(self))
-			desc = ''
-		elif self.type == 0x03:
-			if self.data[1:] != b'\x19\x00\x00\x00':
-				raise ParseError('Unexpected clear instr {}'.format(self))
-			desc = ''
-		elif self.type == 0x08:
-			if self.data[1] != 0x2b:
-				raise ParseError('Unexpected var instr {}'.format(self))
-			vid = parseInt(self.data[2:])
-			desc = '#' + str(vid)
-		else:
-			desc = ''
+				desc = ''
+		except ParseError as e:
+			desc = str(e)
+		except Exception as e:
+			print('ERROR: {}'.format(self))
+			raise e
 		
 		if desc:
 			return base + ': ' + desc

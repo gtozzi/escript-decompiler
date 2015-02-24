@@ -206,7 +206,7 @@ class ECLFile:
 		@return list of lines
 		'''
 		yield('// Source decompiled from binary using decompile.py')
-		yield('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@iscosucks.it>')
+		yield('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@discosucks.it>')
 		yield('// with the precious help of Scripter Evolution, from the same shard')
 		yield('')
 
@@ -216,9 +216,18 @@ class ECLFile:
 		var = [] # Map of var IDs => names
 		reg = [] # Map of W registers
 
-		# Utility indenter function
+		# Utility functions
 		def ind(row, mod=0):
+			''' adds indentation to a row '''
 			return '\t' * (len(blk)+mod) + row
+		def quote(string):
+			''' quotes a string '''
+			#TODO: fixme
+			return '"{}"'.format(string)
+		def unquote(string):
+			''' removes quotes from a quoted string '''
+			#TODO: fixme
+			return string[1:-1]
 
 		# Start with usages
 		for u in self.usages:
@@ -257,20 +266,38 @@ class ECLFile:
 				parms = reg[0-info['func'].parm:]
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
-				yield(ind('{}({});'.format(info['func'].name, ', '.join(parms))))
+				call = '{}({})'.format(info['func'].name, ', '.join(parms))
+				reg.append(call)
+
+			elif inst.type == 'method':
+				reg.append('{}.{}({})'.format(reg[0], info['name'], reg[-1]))
 
 			elif inst.type == 'load':
 				if info['var']:
 					reg.append(var[info['id']])
 				elif info['type'] == 'str':
-					reg.append('"{}"'.format(info['val']))
+					reg.append(quote(info['val']))
 				elif info['type'] in ('int','float'):
 					reg.append('{}'.format(info['val']))
 				else:
 					self.log.error('unimplemented load')
 
+			elif inst.type == 'assign':
+				if info['type'] == 'left':
+					reg[0] = reg[-1]
+				elif info['type'] == 'prop':
+					reg[0] = '{}.{}'.format(reg[-2], unquote(reg[-1]))
+				else:
+					self.log.error('unimplemented assign')
+
 			elif inst.type == 'clear':
+				yield(ind('{};'.format(reg[-1])))
 				reg = []
+
+			elif inst.type == 'var':
+				var.append('v' + str(len(var)+1))
+				reg.append(var[-1])
+				yield(ind('var {};'.format(var[-1])))
 
 			elif inst.type == 'goto':
 				if info['cond'] is not None:
@@ -282,10 +309,14 @@ class ECLFile:
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if block"
 					goto = self.instr[info['to']-1]
-					gd, gi = goto.parse(self.const, self.usages)
-					if goto.type != 'goto':
-						raise RuntimeError('else goto not found')
-					blk.append({'type': 'if', 'else': info['to']-1, 'end': gi['to']})
+					el = None
+					end = info['to']
+					if goto.type == 'goto':
+						# Also found an else statement
+						el = info['to'] - 1
+						gd, gi = goto.parse(self.const, self.usages)
+						end = gi['to']
+					blk.append({'type': 'if', 'else': el, 'end': end})
 				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
 					# This is the else jump of the current "if" statement
 					yield(ind('else',-1))
@@ -305,7 +336,7 @@ class ECLFile:
 					self.log.error('unimplemented return')
 
 			else:
-				self.log.error('unimplemented instruction')
+				self.log.error('unimplemented instruction {}'.format(inst))
 
 			idx += 1
 
@@ -389,6 +420,8 @@ class Instruction():
 		# way better than this way...
 		if data[1] == 0x2f:
 			self.type = 'run'
+		elif data[0] == 0x01 and data[1] == 0x03b:
+			self.type = 'method'
 		elif data[0] == 0x01:
 			self.type = 'load'
 		elif data[0] == 0x02:
@@ -423,6 +456,12 @@ class Instruction():
 			info['usage'] = us
 			info['func'] = fu
 			desc = us.name + ':' + str(fu)
+
+		elif self.type == 'method':
+			pos = parseInt(self.data[2:])
+			name = const.getStr(pos)
+			info['name'] = name
+			desc = 'W1.' + name
 
 		elif self.type == 'load':
 			pos = parseInt(self.data[2:])
@@ -494,7 +533,9 @@ class Instruction():
 				scope = 'local'
 			else:
 				raise ParseError('Var instr with unkown scope {}'.format(self))
+			info['scope'] = scope
 			vid = parseInt(self.data[2:])
+			info['id'] = vid
 			desc = scope + ' #' + str(vid)
 
 		elif self.type == 'goto':
@@ -583,8 +624,7 @@ class ConstantsBlock(Block):
 		hx = ['{:02X}'.format(c) for c in inner]
 		ex = len(hx) % 16
 		if ex:
-			hx.extend(['  '] * ex)
-
+			hx.extend(['  '] * (16-ex))
 		ret = ''
 		row = ''
 		i = 1

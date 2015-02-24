@@ -632,5 +632,7 @@ if __name__ == '__main__':
 	parser.add_argument('ecl_file', help='The compiled script')
 	args = parser.parse_args()
 	ecl = ECLFile(args.ecl_file)
-	print('\n'.join(ecl.dump()))
-	print('\n'.join(ecl.source()))
+	for l in ecl.dump():
+		print(l)
+	for l in ecl.source():
+		print(l)

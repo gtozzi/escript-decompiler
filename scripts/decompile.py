@@ -192,7 +192,7 @@ class ECLFile:
 
 		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
 		for idx, ir in enumerate(self.instr.instr):
-			print('0x{:02X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
+			print('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
 		print()
 
 		print('*** CONSTANTS ***')
@@ -284,8 +284,8 @@ class Instruction():
 			self.type = 'clear'
 		elif data[0] == 0x08 and data[1] in (0x2a,0x2b):
 			self.type = 'var'
-		elif data[0] == 0x08 and data[1] in (0x25,0x26):
-			self.type = 'gotoif'
+		elif data[0] == 0x08 and data[1] in (0x25,0x26,0x27):
+			self.type = 'goto'
 		elif data[0] == 0x0f:
 			self.type = 'return'
 		else:
@@ -311,24 +311,28 @@ class Instruction():
 			elif self.type == 'load':
 				pos = parseInt(self.data[2:])
 				typ = int(self.data[1])
-				if typ >= 0x32:
-					typ = typ - 0x32
 
-				if typ == 0:
+				if typ == 0x00:
+					var = False
 					typ = 'int'
 					val = const.getInt(pos)
-				elif typ == 1:
+				elif typ == 0x01:
+					var = False
 					typ = 'float'
 					val = const.getFloat(pos)
-				elif typ == 2:
+				elif typ == 0x02:
+					var = False
 					typ = 'str'
 					val = const.getStr(pos)
+				elif typ == 0x33:
+					var = True
+					typ = None
 				else:
 					self.log.critical(repr(self))
 					raise ParseError('Unknown type {}'.format(typ))
 
-				if int(self.data[1]) >= 0x32:
-					desc = 'var ' + typ + ' #' + str(pos)
+				if var:
+					desc = 'var #' + str(pos)
 				else:
 					desc = 'const ' + typ + ' <' + str(val) + '>'
 
@@ -355,22 +359,27 @@ class Instruction():
 				if scope == 0x2b:
 					scope = 'global'
 				elif scope == 0x2a:
-					scope = 'program'
+					scope = 'local'
 				else:
 					raise ParseError('Var instr with unkown scope {}'.format(self))
 				vid = parseInt(self.data[2:])
 				desc = scope + ' #' + str(vid)
 
-			elif self.type == 'gotoif':
+			elif self.type == 'goto':
 				cond = self.data[1]
 				if cond == 0x25:
 					cond = 'true'
 				elif cond == 0x26:
 					cond = 'false'
+				elif cond == 0x27:
+					cond = None
 				else:
 					raise ParseError('GotoIf instr with unkown cond {}'.format(self))
 				pos = parseInt(self.data[2:])
-				desc = 'if W1 == {} goto 0x{:02X}'.format(cond, pos)
+				desc = ''
+				if cond:
+					desc = 'if W1 == {} '.format(cond)
+				desc += 'goto 0x{:04X}'.format(pos)
 
 			elif self.type == 'return':
 				if self.data[1:] != b'\x20\x00\x00\x00':

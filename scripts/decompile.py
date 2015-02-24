@@ -180,39 +180,35 @@ class ECLFile:
 		''' return useful informations as a dump
 		@return list of lines
 		'''
-		ret = []
-		ret.append('*** USAGES ***')
+		yield('*** USAGES ***')
 		i = 0
 		for u in self.usages:
-			ret.append('0x{:02X} {}'.format(i, u))
+			yield('0x{:02X} {}'.format(i, u))
 			i += 1
-		ret.append('')
+		yield('')
 
 		if self.program:
-			ret.append('*** PROGRAM ***')
-			ret.append('{} arguments'.format(self.program.args))
-			ret.append('')
+			yield('*** PROGRAM ***')
+			yield('{} arguments'.format(self.program.args))
+			yield('')
 
-		ret.append('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
+		yield('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
 		for idx, ir in enumerate(self.instr.instr):
-			ret.append('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
-		ret.append('')
+			yield('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
+		yield('')
 
-		ret.append('*** CONSTANTS ***')
-		ret.append(str(self.const))
-		ret.append('')
-
-		return ret
+		yield('*** CONSTANTS ***')
+		yield(str(self.const))
+		yield('')
 
 	def source(self):
 		''' Try to build back the source code for the script
 		@return list of lines
 		'''
-		src = []
-		src.append('// Source decompiled from binary using decompile.py')
-		src.append('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@iscosucks.it>')
-		src.append('// with the precious help of Scripter Evolution, from the same shard')
-		src.append('')
+		yield('// Source decompiled from binary using decompile.py')
+		yield('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@iscosucks.it>')
+		yield('// with the precious help of Scripter Evolution, from the same shard')
+		yield('')
 
 		# Registers and status variables
 		blk = [] # Last block is the current block, also used as indentation level
@@ -227,8 +223,8 @@ class ECLFile:
 		# Start with usages
 		for u in self.usages:
 			if u.name not in ('basic','basicio'):
-				src.append('use {};'.format(u.name))
-		src.append('')
+				yield('use {};'.format(u.name))
+		yield('')
 
 		# Start program block, if specified
 		if self.program:
@@ -241,7 +237,7 @@ class ECLFile:
 					self.log.critical('Assign program instruction expected')
 				parms.append(info['parm'])
 				var.append(info['parm'])
-			src.append('program decompiled(' + ', '.join(parms) + ')')
+			yield('program decompiled(' + ', '.join(parms) + ')')
 
 			blk.append({'type': 'program'})
 			idx += self.program.args
@@ -254,14 +250,14 @@ class ECLFile:
 			# End if block if needed
 			if blk and blk[-1]['type'] == 'if' and blk[-1]['end'] == idx:
 				del blk[-1]
-				src.append(ind('endif'))
+				yield(ind('endif'))
 
 			# Parse next instruction
 			if inst.type == 'run':
 				parms = reg[0-info['func'].parm:]
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
-				src.append(ind('{}({});'.format(info['func'].name, ', '.join(parms))))
+				yield(ind('{}({});'.format(info['func'].name, ', '.join(parms))))
 
 			elif inst.type == 'load':
 				if info['var']:
@@ -282,7 +278,7 @@ class ECLFile:
 					op = ''
 					if not info['cond']:
 						op = '! '
-					src.append(ind('if( {}{} )'.format(op, reg[0])))
+					yield(ind('if( {}{} )'.format(op, reg[0])))
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if block"
 					goto = self.instr[info['to']-1]
@@ -292,7 +288,7 @@ class ECLFile:
 					blk.append({'type': 'if', 'else': info['to']-1, 'end': gi['to']})
 				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
 					# This is the else jump of the current "if" statement
-					src.append(ind('else',-1))
+					yield(ind('else',-1))
 				else:
 					self.log.error('unimplemented goto')
 
@@ -300,7 +296,7 @@ class ECLFile:
 				if info['mode'] == 'program':
 					if blk and blk[-1]['type'] == 'program':
 						del blk[-1]
-						src.append(ind('endprogram'))
+						yield(ind('endprogram'))
 					else:
 						self.log.critical('endprogram outside program block')
 				elif info['mode'] == 'generic' and idx == len(self.instr)-1:
@@ -312,8 +308,6 @@ class ECLFile:
 				self.log.error('unimplemented instruction')
 
 			idx += 1
-
-		return src
 
 
 class Block:

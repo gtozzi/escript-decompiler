@@ -191,8 +191,8 @@ class ECLFile:
 			print()
 
 		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
-		for ir in self.instr.instr:
-			print(ir.descr(self.const, self.usages))
+		for idx, ir in enumerate(self.instr.instr):
+			print('0x{:02X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
 		print()
 
 		print('*** CONSTANTS ***')
@@ -267,20 +267,29 @@ class InstructionsBlock(Block):
 class Instruction():
 	''' A single instruction '''
 
-	names = {
-		0x01: 'load',
-		0x02: 'assign',
-		0x03: 'clear',
-		0x08: 'var',
-		0x0F: 'return',
-	}
-
 	def __init__(self, data):
 		self.log = logging.getLogger('instr')
 		if len(data) != 5:
 			raise ParseError('An instruction must be 5 bytes long')
 		self.data = data
-		self.type = data[0] if data[1] != 0x2f else 'run'
+		# Try to identify instruction type, I am pretty sure this can be done
+		# way better than this way...
+		if data[1] == 0x2f:
+			self.type = 'run'
+		elif data[0] == 0x01:
+			self.type = 'load'
+		elif data[0] == 0x02:
+			self.type = 'assign'
+		elif data[0] == 0x03:
+			self.type = 'clear'
+		elif data[0] == 0x08 and data[1] in (0x2a,0x2b):
+			self.type = 'var'
+		elif data[0] == 0x08 and data[1] in (0x25,0x26):
+			self.type = 'gotoif'
+		elif data[0] == 0x0f:
+			self.type = 'return'
+		else:
+			self.type = 'unknown'
 
 	def descr(self, const, usages):
 		''' Returns instruction's description
@@ -290,6 +299,7 @@ class Instruction():
 		base = repr(self)
 
 		try:
+
 			if self.type == 'run':
 				if self.data[2:4] != b'\x00\x00':
 					raise ParseError('Unexpected run instr {}'.format(self))
@@ -297,7 +307,8 @@ class Instruction():
 				fid = int(self.data[0])
 				us = usages[uid]
 				desc = us.name + ':' + str(us.func[fid])
-			elif self.type == 0x01:
+
+			elif self.type == 'load':
 				pos = parseInt(self.data[2:])
 				typ = int(self.data[1])
 				if typ >= 0x32:
@@ -320,27 +331,55 @@ class Instruction():
 					desc = 'var ' + typ + ' #' + str(pos)
 				else:
 					desc = 'const ' + typ + ' <' + str(val) + '>'
-			elif self.type == 0x02:
+
+			elif self.type == 'assign':
 				opt = self.data[1]
-				if opt == 0x42:
-					if self.data[2:] != '\x00\x00\x00':
+				if opt == 0x42 or opt == 0x08:
+					if self.data[2:] != b'\x00\x00\x00':
 						raise ParseError('Unexpected assign instr {}'.format(self))
 					desc = 'W1 := W2'
+					if opt == 0x08:
+						desc += ' oneline'
 				elif opt == 0x38:
 					desc = 'program parm ' + const.getStr(parseInt(self.data[2:]))
 				else:
 					raise ParseError('Unexpected assign instr {}'.format(self))
-			elif self.type == 0x03:
+
+			elif self.type == 'clear':
 				if self.data[1:] != b'\x19\x00\x00\x00':
 					raise ParseError('Unexpected clear instr {}'.format(self))
 				desc = ''
-			elif self.type == 0x08:
-				if self.data[1] != 0x2b:
-					raise ParseError('Unexpected var instr {}'.format(self))
+
+			elif self.type == 'var':
+				scope = self.data[1]
+				if scope == 0x2b:
+					scope = 'global'
+				elif scope == 0x2a:
+					scope = 'program'
+				else:
+					raise ParseError('Var instr with unkown scope {}'.format(self))
 				vid = parseInt(self.data[2:])
-				desc = '#' + str(vid)
+				desc = scope + ' #' + str(vid)
+
+			elif self.type == 'gotoif':
+				cond = self.data[1]
+				if cond == 0x25:
+					cond = 'true'
+				elif cond == 0x26:
+					cond = 'false'
+				else:
+					raise ParseError('GotoIf instr with unkown cond {}'.format(self))
+				pos = parseInt(self.data[2:])
+				desc = 'if W1 == {} goto 0x{:02X}'.format(cond, pos)
+
+			elif self.type == 'return':
+				if self.data[1:] != b'\x20\x00\x00\x00':
+					raise ParseError('Unexpected return instr {}'.format(self))
+				desc = ''
+
 			else:
 				desc = ''
+
 		except ParseError as e:
 			desc = str(e)
 		except Exception as e:
@@ -355,14 +394,7 @@ class Instruction():
 	def __repr__(self):
 		hx = ' '.join(['{:02X}'.format(c) for c in self.data])
 		#hb = ' '.join(['{:08b}'.format(c) for c in self.data[:2]])
-		if self.type == 'run':
-			name = 'run'
-		else:
-			try:
-				name = self.names[int(self.type)]
-			except KeyError:
-				name = '?'
-		return hx + ' - ' + '{:>6s}'.format(name)
+		return hx + ' - ' + '{:>6s}'.format(self.type)
 
 
 class ConstantsBlock(Block):

@@ -177,27 +177,143 @@ class ECLFile:
 			raise ParseError('Unsupported block code %d', code)
 
 	def dump(self):
-		''' Dump useful informations '''
-		print('*** USAGES ***')
+		''' return useful informations as a dump
+		@return list of lines
+		'''
+		ret = []
+		ret.append('*** USAGES ***')
 		i = 0
 		for u in self.usages:
-			print('0x{:02X} {}'.format(i, u))
+			ret.append('0x{:02X} {}'.format(i, u))
 			i += 1
-		print()
+		ret.append('')
 
 		if self.program:
-			print('*** PROGRAM ***')
-			print('{} arguments'.format(self.program.args))
-			print()
+			ret.append('*** PROGRAM ***')
+			ret.append('{} arguments'.format(self.program.args))
+			ret.append('')
 
-		print('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
+		ret.append('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
 		for idx, ir in enumerate(self.instr.instr):
-			print('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
-		print()
+			ret.append('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
+		ret.append('')
 
-		print('*** CONSTANTS ***')
-		print(self.const)
-		print()
+		ret.append('*** CONSTANTS ***')
+		ret.append(str(self.const))
+		ret.append('')
+
+		return ret
+
+	def source(self):
+		''' Try to build back the source code for the script
+		@return list of lines
+		'''
+		src = []
+		src.append('// Source decompiled from binary using decompile.py')
+		src.append('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@iscosucks.it>')
+		src.append('// with the precious help of Scripter Evolution, from the same shard')
+		src.append('')
+
+		# Registers and status variables
+		blk = [] # Last block is the current block, also used as indentation level
+		idx = 0 # Index of next instruction to be read
+		var = [] # Map of var IDs => names
+		reg = [] # Map of W registers
+
+		# Utility indenter function
+		def ind(row, mod=0):
+			return '\t' * (len(blk)+mod) + row
+
+		# Start with usages
+		for u in self.usages:
+			if u.name not in ('basic','basicio'):
+				src.append('use {};'.format(u.name))
+		src.append('')
+
+		# Start program block, if specified
+		if self.program:
+			parms = []
+			# Expect fist instructions to define program variable names
+			for i in range(idx,idx+self.program.args):
+				inst = self.instr[i]
+				desc, info = inst.parse(self.const, self.usages)
+				if inst.type != 'assign' or info['type'] != 'program':
+					self.log.critical('Assign program instruction expected')
+				parms.append(info['parm'])
+				var.append(info['parm'])
+			src.append('program decompiled(' + ', '.join(parms) + ')')
+
+			blk.append({'type': 'program'})
+			idx += self.program.args
+
+		# Parse the instructions
+		while idx < len(self.instr):
+			inst = self.instr[idx]
+			desc, info = inst.parse(self.const, self.usages)
+
+			# End if block if needed
+			if blk and blk[-1]['type'] == 'if' and blk[-1]['end'] == idx:
+				del blk[-1]
+				src.append(ind('endif'))
+
+			# Parse next instruction
+			if inst.type == 'run':
+				parms = reg[0-info['func'].parm:]
+				if len(parms) == 1 and parms[0] == '""':
+					parms = [] # Omit a single null string parameter
+				src.append(ind('{}({});'.format(info['func'].name, ', '.join(parms))))
+
+			elif inst.type == 'load':
+				if info['var']:
+					reg.append(var[info['id']])
+				elif info['type'] == 'str':
+					reg.append('"{}"'.format(info['val']))
+				elif info['type'] in ('int','float'):
+					reg.append('{}'.format(info['val']))
+				else:
+					self.log.error('unimplemented load')
+
+			elif inst.type == 'clear':
+				reg = []
+
+			elif inst.type == 'goto':
+				if info['cond'] is not None:
+					# Conditional jump starts an if block
+					op = ''
+					if not info['cond']:
+						op = '! '
+					src.append(ind('if( {}{} )'.format(op, reg[0])))
+					# Expect to find an unconditional jump at to-1. This jump leads
+					# to the end of the "if block"
+					goto = self.instr[info['to']-1]
+					gd, gi = goto.parse(self.const, self.usages)
+					if goto.type != 'goto':
+						raise RuntimeError('else goto not found')
+					blk.append({'type': 'if', 'else': info['to']-1, 'end': gi['to']})
+				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
+					# This is the else jump of the current "if" statement
+					src.append(ind('else',-1))
+				else:
+					self.log.error('unimplemented goto')
+
+			elif inst.type == 'return':
+				if info['mode'] == 'program':
+					if blk and blk[-1]['type'] == 'program':
+						del blk[-1]
+						src.append(ind('endprogram'))
+					else:
+						self.log.critical('endprogram outside program block')
+				elif info['mode'] == 'generic' and idx == len(self.instr)-1:
+					pass # Ignore final return of the file
+				else:
+					self.log.error('unimplemented return')
+
+			else:
+				self.log.error('unimplemented instruction')
+
+			idx += 1
+
+		return src
 
 
 class Block:
@@ -264,6 +380,9 @@ class InstructionsBlock(Block):
 	def __len__(self):
 		return len(self.instr)
 
+	def __getitem__(self, key):
+		return self.instr[key]
+
 class Instruction():
 	''' A single instruction '''
 
@@ -291,6 +410,133 @@ class Instruction():
 		else:
 			self.type = 'unknown'
 
+	def parse(self, const, usages):
+		''' Parses this instruction
+		@param const: The constants block in use
+		@param usages: The usages list in use
+		@throws ParseError
+		@return list: (readable description, info dictionary (instruction dependant))
+		'''
+		info = {}
+
+		if self.type == 'run':
+			if self.data[2:4] != b'\x00\x00':
+				raise ParseError('Unexpected run instr {}'.format(self))
+			uid = int(self.data[4])
+			fid = int(self.data[0])
+			us = usages[uid]
+			fu = us.func[fid]
+			info['usage'] = us
+			info['func'] = fu
+			desc = us.name + ':' + str(fu)
+
+		elif self.type == 'load':
+			pos = parseInt(self.data[2:])
+			typ = int(self.data[1])
+
+			if typ == 0x00:
+				var = False
+				typ = 'int'
+				val = const.getInt(pos)
+			elif typ == 0x01:
+				var = False
+				typ = 'float'
+				val = const.getFloat(pos)
+			elif typ == 0x02:
+				var = False
+				typ = 'str'
+				val = const.getStr(pos)
+			elif typ == 0x33:
+				var = True
+				typ = None
+			else:
+				self.log.critical(repr(self))
+				raise ParseError('Unknown type {}'.format(typ))
+
+			info['var'] = var
+			if var:
+				desc = 'var #' + str(pos)
+				info['id'] = pos
+			else:
+				desc = 'const ' + typ + ' <' + str(val) + '>'
+				info['val'] = val
+				info['type'] = typ
+
+		elif self.type == 'assign':
+			opt = self.data[1]
+			if opt == 0x42 or opt == 0x08:
+				if self.data[2:] != b'\x00\x00\x00':
+					raise ParseError('Unexpected assign instr {}'.format(self))
+				desc = 'W1 := W2'
+				info['type'] = 'left'
+				if opt == 0x08:
+					desc += ' oneline'
+					info['oneline'] = True
+				else:
+					info['oneline'] = False
+			elif opt == 0x1E:
+				if self.data[2:] != b'\x00\x00\x00':
+					raise ParseError('Unexpected assign instr {}'.format(self))
+				desc = 'W1 := W1.W2'
+				info['type'] = 'prop'
+			elif opt == 0x38:
+				parm = const.getStr(parseInt(self.data[2:]))
+				desc = 'program parm ' + parm
+				info['type'] = 'program'
+				info['parm'] = parm
+			else:
+				raise ParseError('Unexpected assign instr {}'.format(self))
+
+		elif self.type == 'clear':
+			if self.data[1:] != b'\x19\x00\x00\x00':
+				raise ParseError('Unexpected clear instr {}'.format(self))
+			desc = ''
+
+		elif self.type == 'var':
+			scope = self.data[1]
+			if scope == 0x2b:
+				scope = 'global'
+			elif scope == 0x2a:
+				scope = 'local'
+			else:
+				raise ParseError('Var instr with unkown scope {}'.format(self))
+			vid = parseInt(self.data[2:])
+			desc = scope + ' #' + str(vid)
+
+		elif self.type == 'goto':
+			cond = self.data[1]
+			if cond == 0x25:
+				cond = True
+			elif cond == 0x26:
+				cond = False
+			elif cond == 0x27:
+				cond = None
+			else:
+				raise ParseError('GotoIf instr with unkown cond {}'.format(self))
+			info['cond'] = cond
+			pos = parseInt(self.data[2:])
+			info['to'] = pos
+			desc = ''
+			if cond is not None:
+				desc = 'if W1 == {} '.format(cond)
+			desc += 'goto 0x{:04X}'.format(pos)
+
+		elif self.type == 'return':
+			cod = self.data[1:]
+			if cod == b'\x20\x00\x00\x00':
+				desc = 'generic'
+				info['mode'] = 'generic'
+			elif cod == b'\x24\x02\x00\x00':
+				desc = 'end program'
+				info['mode'] = 'program'
+			else:
+				raise ParseError('Unexpected return instr {}'.format(self))
+
+		else:
+			desc = ''
+
+		return (desc, info)
+
 	def descr(self, const, usages):
 		''' Returns instruction's description
 		@param const: The constants block in use
@@ -299,96 +545,7 @@ class Instruction():
 		base = repr(self)
 
 		try:
-
-			if self.type == 'run':
-				if self.data[2:4] != b'\x00\x00':
-					raise ParseError('Unexpected run instr {}'.format(self))
-				uid = int(self.data[4])
-				fid = int(self.data[0])
-				us = usages[uid]
-				desc = us.name + ':' + str(us.func[fid])
-
-			elif self.type == 'load':
-				pos = parseInt(self.data[2:])
-				typ = int(self.data[1])
-
-				if typ == 0x00:
-					var = False
-					typ = 'int'
-					val = const.getInt(pos)
-				elif typ == 0x01:
-					var = False
-					typ = 'float'
-					val = const.getFloat(pos)
-				elif typ == 0x02:
-					var = False
-					typ = 'str'
-					val = const.getStr(pos)
-				elif typ == 0x33:
-					var = True
-					typ = None
-				else:
-					self.log.critical(repr(self))
-					raise ParseError('Unknown type {}'.format(typ))
-
-				if var:
-					desc = 'var #' + str(pos)
-				else:
-					desc = 'const ' + typ + ' <' + str(val) + '>'
-
-			elif self.type == 'assign':
-				opt = self.data[1]
-				if opt == 0x42 or opt == 0x08:
-					if self.data[2:] != b'\x00\x00\x00':
-						raise ParseError('Unexpected assign instr {}'.format(self))
-					desc = 'W1 := W2'
-					if opt == 0x08:
-						desc += ' oneline'
-				elif opt == 0x38:
-					desc = 'program parm ' + const.getStr(parseInt(self.data[2:]))
-				else:
-					raise ParseError('Unexpected assign instr {}'.format(self))
-
-			elif self.type == 'clear':
-				if self.data[1:] != b'\x19\x00\x00\x00':
-					raise ParseError('Unexpected clear instr {}'.format(self))
-				desc = ''
-
-			elif self.type == 'var':
-				scope = self.data[1]
-				if scope == 0x2b:
-					scope = 'global'
-				elif scope == 0x2a:
-					scope = 'local'
-				else:
-					raise ParseError('Var instr with unkown scope {}'.format(self))
-				vid = parseInt(self.data[2:])
-				desc = scope + ' #' + str(vid)
-
-			elif self.type == 'goto':
-				cond = self.data[1]
-				if cond == 0x25:
-					cond = 'true'
-				elif cond == 0x26:
-					cond = 'false'
-				elif cond == 0x27:
-					cond = None
-				else:
-					raise ParseError('GotoIf instr with unkown cond {}'.format(self))
-				pos = parseInt(self.data[2:])
-				desc = ''
-				if cond:
-					desc = 'if W1 == {} '.format(cond)
-				desc += 'goto 0x{:04X}'.format(pos)
-
-			elif self.type == 'return':
-				if self.data[1:] != b'\x20\x00\x00\x00':
-					raise ParseError('Unexpected return instr {}'.format(self))
-				desc = ''
-
-			else:
-				desc = ''
-
+			desc, info = self.parse(const, usages)
 		except ParseError as e:
 			desc = str(e)
 		except Exception as e:
@@ -481,4 +638,5 @@ if __name__ == '__main__':
 	parser.add_argument('ecl_file', help='The compiled script')
 	args = parser.parse_args()
 	ecl = ECLFile(args.ecl_file)
-	ecl.dump()
+	print('\n'.join(ecl.dump()))
+	print('\n'.join(ecl.source()))

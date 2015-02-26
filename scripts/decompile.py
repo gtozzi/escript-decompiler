@@ -338,6 +338,8 @@ class ECLFile:
 			else:
 				self.log.error('unimplemented instruction {}'.format(inst))
 
+			self.log.debug(reg)
+
 			idx += 1
 
 
@@ -500,7 +502,7 @@ class Instruction():
 			if opt == 0x42 or opt == 0x08:
 				if self.data[2:] != b'\x00\x00\x00':
 					raise ParseError('Unexpected assign instr {}'.format(self))
-				desc = 'W1 := W2'
+				desc = 'W1 := W<last>'
 				info['type'] = 'left'
 				if opt == 0x08:
 					desc += ' oneline'
@@ -510,7 +512,7 @@ class Instruction():
 			elif opt == 0x1E:
 				if self.data[2:] != b'\x00\x00\x00':
 					raise ParseError('Unexpected assign instr {}'.format(self))
-				desc = 'W1 := W1.W2'
+				desc = 'W1 := W<last-1>.W<last>'
 				info['type'] = 'prop'
 			elif opt == 0x38:
 				parm = const.getStr(parseInt(self.data[2:]))
@@ -666,11 +668,13 @@ class ParseError(RuntimeError):
 if __name__ == '__main__':
 	import argparse
 
-	logging.basicConfig(level=logging.INFO)
-
 	parser = argparse.ArgumentParser()
 	parser.add_argument('ecl_file', help='The compiled script')
+	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
 	args = parser.parse_args()
+
+	logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+
 	ecl = ECLFile(args.ecl_file)
 	for l in ecl.dump():
 		print(l)

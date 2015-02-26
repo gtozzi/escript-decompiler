@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 '''
-EScript decompiler for binary ECL files version 2 (POL092)
+EScript decompiler for binary ECL files version 2 (POL093)
 '''
 
 import os, sys
@@ -214,7 +214,7 @@ class ECLFile:
 		blk = [] # Last block is the current block, also used as indentation level
 		idx = 0 # Index of next instruction to be read
 		var = [] # Map of var IDs => names
-		reg = [] # Map of W registers
+		reg = W() # Map of W registers
 
 		# Utility functions
 		def ind(row, mod=0):
@@ -253,8 +253,8 @@ class ECLFile:
 
 		# Instructions being used by multiple instructions
 		def clear(reg):
-			if reg:
-				yield(ind('{};'.format(reg[0])))
+			if len(reg):
+				yield(ind('{};'.format(reg.last())))
 				reg.clear()
 
 		# Parse the instructions
@@ -348,6 +348,36 @@ class ECLFile:
 			self.log.debug("%s %s W:%s", inst.type, desc, reg)
 
 			idx += 1
+
+class W:
+	''' Holder class for W registers '''
+	def __init__(self):
+		self.reg = []
+		self.idx = None
+
+	def append(self, val):
+		self.reg.append(val)
+		self.idx = len(self.reg) - 1
+
+	def __getitem__(self, idx):
+		return self.reg[idx]
+
+	def __setitem__(self, idx, val):
+		self.reg[idx] = val
+		self.idx = idx
+
+	def clear(self):
+		self.reg.clear()
+
+	def __len__(self):
+		return len(self.reg)
+
+	def __repr__(self):
+		return '{}:{}'.format(repr(self.reg), self.idx)
+
+	def last(self):
+		''' Returns last written element '''
+		return self.reg[self.idx]
 
 
 class Block:

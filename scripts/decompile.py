@@ -251,6 +251,12 @@ class ECLFile:
 			blk.append({'type': 'program'})
 			idx += self.program.args
 
+		# Instructions being used by multiple instructions
+		def clear(reg):
+			if reg:
+				yield(ind('{};'.format(reg[0])))
+				reg.clear()
+
 		# Parse the instructions
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -284,17 +290,17 @@ class ECLFile:
 
 			elif inst.type == 'assign':
 				if info['type'] == 'left':
-					reg[0] = reg[-1]
+					reg[0] = '{} := {}'.format(reg[0], reg[-1])
 				elif info['type'] == 'prop':
 					reg[0] = '{}.{}'.format(reg[-2], unquote(reg[-1]))
 				else:
 					self.log.error('unimplemented assign')
 
 			elif inst.type == 'clear':
-				yield(ind('{};'.format(reg[-1])))
-				reg = []
+				yield from clear(reg)
 
 			elif inst.type == 'var':
+				yield from clear(reg)
 				var.append('v' + str(len(var)+1))
 				reg.append(var[-1])
 				yield(ind('var {};'.format(var[-1])))
@@ -324,6 +330,7 @@ class ECLFile:
 					self.log.error('unimplemented goto')
 
 			elif inst.type == 'return':
+				yield from clear(reg)
 				if info['mode'] == 'program':
 					if blk and blk[-1]['type'] == 'program':
 						del blk[-1]
@@ -338,7 +345,7 @@ class ECLFile:
 			else:
 				self.log.error('unimplemented instruction {}'.format(inst))
 
-			self.log.debug(reg)
+			self.log.debug("%s %s W:%s", inst.type, desc, reg)
 
 			idx += 1
 
@@ -563,7 +570,7 @@ class Instruction():
 			if cod == b'\x20\x00\x00\x00':
 				desc = 'generic'
 				info['mode'] = 'generic'
-			elif cod == b'\x24\x02\x00\x00':
+			elif cod == b'\x24\x02\x00\x00' or cod == b'\x24\x03\x00\x00':
 				desc = 'end program'
 				info['mode'] = 'program'
 			else:

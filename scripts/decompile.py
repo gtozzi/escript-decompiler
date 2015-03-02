@@ -293,6 +293,8 @@ class ECLFile:
 					reg[0] = '{} := {}'.format(reg[0], reg[-1])
 				elif info['type'] == 'prop':
 					reg[0] = '{}.{}'.format(reg[-2], unquote(reg[-1]))
+				elif info['type'] == 'concat':
+					reg.append('{} + {}'.format(reg[-2], reg[-1]))
 				else:
 					self.log.error('unimplemented assign')
 
@@ -518,7 +520,7 @@ class Instruction():
 				var = False
 				typ = 'str'
 				val = const.getStr(pos)
-			elif typ == 0x33:
+			elif typ == 0x33 or typ == 0x34:
 				var = True
 				typ = None
 			else:
@@ -556,6 +558,9 @@ class Instruction():
 				desc = 'program parm ' + parm
 				info['type'] = 'program'
 				info['parm'] = parm
+			elif opt == 0x04:
+				desc = 'concat W1 + W2'
+				info['type'] = 'concat'
 			else:
 				raise ParseError('Unexpected assign instr {}'.format(self))
 

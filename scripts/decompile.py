@@ -7,6 +7,7 @@ EScript decompiler for binary ECL files version 2 (POL093)
 import os, sys
 import logging
 import string
+import collections
 
 
 def parseInt(val):
@@ -211,10 +212,11 @@ class ECLFile:
 		yield('')
 
 		# Registers and status variables
-		blk = [] # Last section is the current section, also used as indentation level
-		idx = 0 # Index of next instruction to be read
-		var = [] # Map of var IDs => names
-		reg = W() # Map of W registers
+		blk = [] # Last block is the current block, also used as indentation level
+		idx = 0 # Index of next instruction to be read (PC, Program Counter)
+		glo = [] # Map of global var IDs => names
+		loc = [] # Map of local var IDs => names
+		reg = W() # Map of W registers (ValueStack)
 
 		# Utility functions
 		def ind(row, mod=0):
@@ -242,20 +244,14 @@ class ECLFile:
 			for i in range(idx,idx+self.program.args):
 				inst = self.instr[i]
 				desc, info = inst.parse(self.const, self.usages)
-				if inst.type != 'assign' or info['type'] != 'program':
+				if info['name'] != 'getarg':
 					self.log.critical('Assign program instruction expected')
-				parms.append(info['parm'])
-				var.append(info['parm'])
+				parms.append(info['arg'])
+				loc.append(info['arg'])
 			yield('program decompiled(' + ', '.join(parms) + ')')
 
 			blk.append({'type': 'program'})
 			idx += self.program.args
-
-		# Instructions being used by multiple instructions
-		def clear(reg):
-			if len(reg):
-				yield(ind('{};'.format(reg.last())))
-				reg.clear()
 
 		# Parse the instructions
 		while idx < len(self.instr):
@@ -268,44 +264,67 @@ class ECLFile:
 				yield(ind('endif'))
 
 			# Parse next instruction
-			if inst.type == 'run':
-				parms = reg[0-info['func'].parm:]
+			try:
+				name = info['name']
+			except KeyError:
+				name = None
+
+			if name == 'run':
+				parms = []
+				for i in range(info['func'].parm):
+					parms.insert(0, reg.pop())
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
 				call = '{}({})'.format(info['func'].name, ', '.join(parms))
 				reg.append(call)
 
 			elif inst.type == 'method':
-				reg.append('{}.{}({})'.format(reg[0], info['name'], reg[-1]))
+				reg.append('{}.{}({})'.format(reg[0], name, reg[-1]))
 
-			elif inst.type == 'load':
-				if info['var']:
-					reg.append(var[info['id']])
+			elif name == 'load':
+				if info['var'] and info['scope'] == 'global':
+					v = glo[info['id']]
+				elif info['var'] and info['scope'] == 'local':
+					v = loc[info['id']]
 				elif info['type'] == 'str':
-					reg.append(quote(info['val']))
+					v = quote(info['val'])
 				elif info['type'] in ('int','float'):
-					reg.append('{}'.format(info['val']))
+					v = str(info['val'])
 				else:
 					self.log.error('unimplemented load')
+				reg.append(v)
 
-			elif inst.type == 'assign':
-				if info['type'] == 'left':
-					reg[0] = '{} := {}'.format(reg[0], reg[-1])
-				elif info['type'] == 'prop':
-					reg[0] = '{}.{}'.format(reg[-2], unquote(reg[-1]))
-				elif info['type'] == 'concat':
-					reg.append('{} + {}'.format(reg[-2], reg[-1]))
+			elif name == 'assign':
+				r = reg.pop()
+				l = reg.pop()
+				if info['op'] == ':=':
+					# Assign left
+					res = '{} := {}'.format(l, r)
+				elif info['op'] == '.':
+					# Access a property
+					res = '{}.{}'.format(l, unquote(r))
+				elif info['op'] == '+':
+					# Concatenation
+					res = '{} + {}'.format(l, r)
 				else:
-					self.log.error('unimplemented assign')
+					self.log.error('unimplemented assign {op}'.format(**info))
+				reg.append(res)
 
-			elif inst.type == 'clear':
-				yield from clear(reg)
+			elif name == 'consume':
+				r = reg.pop()
+				yield(ind('{};'.format(r)))
 
-			elif inst.type == 'var':
-				yield from clear(reg)
-				var.append('v' + str(len(var)+1))
-				reg.append(var[-1])
-				yield(ind('var {};'.format(var[-1])))
+			elif name == 'var':
+				if info['scope'] == 'global':
+					name = 'g' + str(len(glo)+1)
+					glo.append(name)
+				elif info['scope'] == 'local':
+					name = 'l' + str(len(loc)+1)
+					loc.append(name)
+				else:
+					self.log.error('unimplemented var')
+				reg.append(name)
+				yield(ind('var {};'.format(name)))
 
 			elif inst.type == 'goto':
 				if info['cond'] is not None:
@@ -331,56 +350,33 @@ class ECLFile:
 				else:
 					self.log.error('unimplemented goto')
 
-			elif inst.type == 'return':
-				yield from clear(reg)
-				if info['mode'] == 'program':
-					if blk and blk[-1]['type'] == 'program':
-						del blk[-1]
-						yield(ind('endprogram'))
-					else:
-						self.log.critical('endprogram outside program section')
-				elif info['mode'] == 'generic' and idx == len(self.instr)-1:
-					pass # Ignore final return of the file
+			elif name == 'progend':
+				if idx == len(self.instr)-1:
+					# This is the final instruction, just ignore it
+					pass
 				else:
-					self.log.error('unimplemented return')
+					self.log.error('unimplemented progend')
+
+			elif name == 'blockend':
+				# Output registers before deleting them, from left to right
+				for i in range(0-info['num'],0):
+					yield(ind('{};'.format(reg[i])))
+					del reg[i]
+				del blk[-1]
+
+			elif name is None:
+				self.log.error('unknown instruction {}'.format(inst))
 
 			else:
 				self.log.error('unimplemented instruction {}'.format(inst))
 
-			self.log.debug("%s %s W:%s", inst.type, desc, reg)
+			self.log.debug("%02X: %s, W: %s", inst.id, desc, reg)
 
 			idx += 1
 
-class W:
+class W(collections.UserList):
 	''' Holder class for W registers '''
-	def __init__(self):
-		self.reg = []
-		self.idx = None
-
-	def append(self, val):
-		self.reg.append(val)
-		self.idx = len(self.reg) - 1
-
-	def __getitem__(self, idx):
-		return self.reg[idx]
-
-	def __setitem__(self, idx, val):
-		self.reg[idx] = val
-		self.idx = idx
-
-	def clear(self):
-		self.reg.clear()
-
-	def __len__(self):
-		return len(self.reg)
-
-	def __repr__(self):
-		return '{}:{}'.format(repr(self.reg), self.idx)
-
-	def last(self):
-		''' Returns last written element '''
-		return self.reg[self.idx]
-
+	pass
 
 class Section:
 	''' Base class for a generic section '''
@@ -452,31 +448,190 @@ class InstructionsSection(Section):
 class Instruction():
 	''' A single instruction '''
 
+	# Possible values for first byte "type", from tokens.h
+	# Often the real meaning is different or this byte is just ignored
+	TYPES = (
+		'TYP_TERMINATOR',
+		'TYP_OPERAND',
+		'TYP_OPERATOR', # BINARY implied
+		'TYP_UNARY_OPERATOR',
+		'TYP_LEFTPAREN',
+		'TYP_RIGHTPAREN',
+		'TYP_LEFTBRACKET',
+		'TYP_RIGHTBRACKET',
+
+		'TYP_TESTMAX', # = TYP_RIGHTBRACKET,
+
+		'TYP_RESERVED',
+
+		'TYP_LABEL', # a GOTO/GOSUB label
+
+		'TYP_FUNC', # func returning something
+		'TYP_METHOD', # object method
+
+		'TYP_USERFUNC',
+
+		'TYP_SEPARATOR',
+		'TYP_DELIMITER',
+
+		'TYP_CONTROL',
+
+		'TYP_LEFTBRACE',
+		'TYP_RIGHTBRACE',
+
+		'TYP_NUMTYPES'
+	)
+
+	# Possible values for 2nd byte "id", from tokens.h
+	# (commenting out additions for POL099)
+	# Comment blocks on the right idicates verified values
+	TOKENS = (
+		'TOK_LONG',                                                #  0 0x00
+		'TOK_DOUBLE',
+		'TOK_STRING', # "string literal"
+
+		'TOK_IDENT', # variable identifier, i.e. 'A', 'AB', A$ */
+
+		'TOK_ADD',                                                 #  4 0x04
+		'TOK_SUBTRACT',
+		'TOK_MULT',
+		'TOK_DIV',
+
+		'TOK_ASSIGN',                                              #  8 0x08
+		'INS_ASSIGN_CONSUME',
+
+		'TOK_PLUSEQUAL',
+		'TOK_MINUSEQUAL',
+		#'TOK_TIMESEQUAL',
+		#'TOK_DIVIDEEQUAL',
+		#'TOK_MODULUSEQUAL',
+		'TOK_INSERTINTO',
+
+		# comparison operators
+		'TOK_LESSTHAN',
+		'TOK_LESSEQ',
+		'TOK_GRTHAN',
+		'TOK_GREQ',
+
+		'TOK_AND',
+		'TOK_OR',
+
+		# equalite/inequality operators
+		'TOK_EQUAL',
+		'TOK_NEQ',
+
+		# unary operators
+		'TOK_UNPLUS',
+		'TOK_UNMINUS',
+		'TOK_LOG_NOT',
+		'TOK_BITWISE_NOT',
+
+		'TOK_CONSUMER',                                            # 25 0x19
+
+		'TOK_ARRAY_SUBSCRIPT',
+
+		'???', # Fllling an hole
+
+		'TOK_ADDMEMBER',
+		'TOK_DELMEMBER',
+		'TOK_CHKMEMBER',                                           # 30 0x1e
+
+		'CTRL_STATEMENTBEGIN',
+		'CTRL_PROGEND',                                            # 32 0x20
+		'CTRL_MAKELOCAL',
+		'CTRL_JSR_USERFUNC',
+		'INS_POP_PARAM',
+		'CTRL_LEAVE_BLOCK', # offset is number of variables to remove
+
+		'RSV_JMPIFFALSE',                                          # 37 0x25
+		'RSV_JMPIFTRUE',
+
+		'RSV_GOTO',
+		'RSV_RETURN',
+		'RSV_EXIT',
+
+		'RSV_LOCAL',
+		'RSV_GLOBAL',                                              # 43 0x2b
+		'RSV_VAR',
+
+		'RSV_FUNCTION',
+
+		'INS_DECLARE_ARRAY',
+
+		'TOK_FUNC',                                                # 47 0x2f
+		'TOK_USERFUNC',
+		'TOK_ERROR',
+		'TOK_IN',
+		'TOK_LOCALVAR',
+		'TOK_GLOBALVAR',
+		'INS_INITFOREACH',
+		'INS_STEPFOREACH',
+		'INS_CASEJMP',
+		'INS_GET_ARG',                                             # 56 0x38
+		'TOK_ARRAY',
+
+		'???', # Fllling an hole
+
+		'INS_CALL_METHOD',                                         # 59 0x3b
+
+		'???', # Fllling an hole
+
+		'TOK_DICTIONARY',
+		'TOK_STACK',
+		'INS_INITFOR',
+		'INS_NEXTFOR',
+		'TOK_REFTO',
+		'INS_POP_PARAM_BYREF',                                     # 66 0x42
+		'TOK_MODULUS',
+
+		'TOK_BSLEFT',
+		'TOK_BSRIGHT',
+		'TOK_BITAND',
+		'TOK_BITOR',
+		'TOK_BITXOR',
+
+		'TOK_STRUCT',
+		'INS_SUBSCRIPT_ASSIGN',
+		'INS_SUBSCRIPT_ASSIGN_CONSUME',
+		'INS_MULTISUBSCRIPT',
+		'INS_MULTISUBSCRIPT_ASSIGN',
+		'INS_ASSIGN_LOCALVAR',
+		'INS_ASSIGN_GLOBALVAR',
+
+		'INS_GET_MEMBER',
+		'INS_SET_MEMBER',
+		'INS_SET_MEMBER_CONSUME',
+
+		'INS_ADDMEMBER2',
+		'INS_ADDMEMBER_ASSIGN',
+		'INS_UNINIT',
+		'INS_DICTIONARY_ADDMEMBER',
+
+		'INS_GET_MEMBER_ID',
+		'INS_SET_MEMBER_ID',
+		'INS_SET_MEMBER_ID_CONSUME',
+		'INS_CALL_METHOD_ID',
+
+		'TOK_EQUAL1',
+
+		'INS_SET_MEMBER_ID_CONSUME_PLUSEQUAL',
+		'INS_SET_MEMBER_ID_CONSUME_MINUSEQUAL',
+		'INS_SET_MEMBER_ID_CONSUME_TIMESEQUAL',
+		'INS_SET_MEMBER_ID_CONSUME_DIVIDEEQUAL',
+		'INS_SET_MEMBER_ID_CONSUME_MODULUSEQUAL',
+	)
+
 	def __init__(self, data):
 		self.log = logging.getLogger('instr')
 		if len(data) != 5:
 			raise ParseError('An instruction must be 5 bytes long')
-		self.data = data
-		# Try to identify instruction type, I am pretty sure this can be done
-		# way better than this way...
-		if data[1] == 0x2f:
-			self.type = 'run'
-		elif data[0] == 0x01 and data[1] == 0x03b:
-			self.type = 'method'
-		elif data[0] == 0x01:
-			self.type = 'load'
-		elif data[0] == 0x02:
-			self.type = 'assign'
-		elif data[0] == 0x03:
-			self.type = 'clear'
-		elif data[0] == 0x08 and data[1] in (0x2a,0x2b):
-			self.type = 'var'
-		elif data[0] == 0x08 and data[1] in (0x25,0x26,0x27):
-			self.type = 'goto'
-		elif data[0] == 0x0f:
-			self.type = 'return'
-		else:
-			self.type = 'unknown'
+		self.raw = data
+
+		# Split bits
+		self.type = data[0]
+		self.id = data[1]
+		self.offset = parseInt(data[2:4])
+		self.module = data[4]
 
 	def parse(self, const, usages):
 		''' Parses this instruction
@@ -487,129 +642,111 @@ class Instruction():
 		'''
 		info = {}
 
-		if self.type == 'run':
-			if self.data[2:4] != b'\x00\x00':
-				raise ParseError('Unexpected run instr {}'.format(self))
-			uid = int(self.data[4])
-			fid = int(self.data[0])
-			us = usages[uid]
-			fu = us.func[fid]
-			info['usage'] = us
-			info['func'] = fu
-			desc = us.name + ':' + str(fu)
+		if self.id == 0x2f:
+			info['name'] = 'run'
+			uid = int(self.module)
+			info['usage'] = usages[uid]
+			fid = int(self.type)
+			info['func'] = info['usage'].func[fid]
+			desc = '{name} {usage.name}:{func}'.format(**info)
 
-		elif self.type == 'method':
-			pos = parseInt(self.data[2:])
-			name = const.getStr(pos)
-			info['name'] = name
-			desc = 'W1.' + name
+		elif self.id == 0x3b:
+			info['name'] = 'method'
+			info['method'] = const.getStr(pos)
+			desc = 'L := R.{method}()'.fotmat(**info)
 
-		elif self.type == 'load':
-			pos = parseInt(self.data[2:])
-			typ = int(self.data[1])
+		elif self.id in (0x00,0x01,0x02, 0x33,0x34):
+			info['name'] = 'load'
+			if self.id == 0x00:
+				info['var'] = False
+				info['type'] = 'int'
+				info['val'] = const.getInt(self.offset)
+			elif self.id == 0x01:
+				info['var'] = False
+				info['type'] = 'float'
+				info['val'] = const.getFloat(self.offset)
+			elif self.id == 0x02:
+				info['var'] = False
+				info['type'] = 'str'
+				info['val'] = const.getStr(self.offset)
+			elif self.id == 0x33:
+				info['var'] = True
+				info['scope'] = 'local'
+				info['id'] = self.offset
+			elif self.id == 0x34:
+				info['var'] = True
+				info['scope'] = 'global'
+				info['id'] = self.offset
 
-			if typ == 0x00:
-				var = False
-				typ = 'int'
-				val = const.getInt(pos)
-			elif typ == 0x01:
-				var = False
-				typ = 'float'
-				val = const.getFloat(pos)
-			elif typ == 0x02:
-				var = False
-				typ = 'str'
-				val = const.getStr(pos)
-			elif typ == 0x33 or typ == 0x34:
-				var = True
-				typ = None
+			if info['var']:
+				desc = 'load {scope} var #{id}'.format(**info)
 			else:
-				self.log.critical(repr(self))
-				raise ParseError('Unknown type {}'.format(typ))
+				desc = 'load const {type} <{val}>'.format(**info)
 
-			info['var'] = var
-			if var:
-				desc = 'var #' + str(pos)
-				info['id'] = pos
-			else:
-				desc = 'const ' + typ + ' <' + str(val) + '>'
-				info['val'] = val
-				info['type'] = typ
+		elif self.id == 0x38:
+			info['name'] = 'getarg'
+			info['arg'] = const.getStr(self.offset)
+			desc = '{name} {arg}'.format(**info)
 
-		elif self.type == 'assign':
-			opt = self.data[1]
-			if opt == 0x42 or opt == 0x08:
-				if self.data[2:] != b'\x00\x00\x00':
-					raise ParseError('Unexpected assign instr {}'.format(self))
-				desc = 'W1 := W<last>'
-				info['type'] = 'left'
-				if opt == 0x08:
-					desc += ' oneline'
-					info['oneline'] = True
-				else:
-					info['oneline'] = False
-			elif opt == 0x1E:
-				if self.data[2:] != b'\x00\x00\x00':
-					raise ParseError('Unexpected assign instr {}'.format(self))
-				desc = 'W1 := W<last-1>.W<last>'
-				info['type'] = 'prop'
-			elif opt == 0x38:
-				parm = const.getStr(parseInt(self.data[2:]))
-				desc = 'program parm ' + parm
-				info['type'] = 'program'
-				info['parm'] = parm
-			elif opt == 0x04:
-				desc = 'concat W1 + W2'
-				info['type'] = 'concat'
-			else:
-				raise ParseError('Unexpected assign instr {}'.format(self))
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x1e):
+			info['name'] = 'assign'
+			space = True
+			if self.id == 0x04:
+				info['op'] = '+'
+			elif self.id == 0x05:
+				info['op'] = '-'
+			elif self.id == 0x06:
+				info['op'] = '*'
+			elif self.id == 0x07:
+				info['op'] = '/'
 
-		elif self.type == 'clear':
-			if self.data[1:] != b'\x19\x00\x00\x00':
-				raise ParseError('Unexpected clear instr {}'.format(self))
-			desc = ''
+			elif self.id == 0x08:
+				info['op'] = ':='
 
-		elif self.type == 'var':
-			scope = self.data[1]
-			if scope == 0x2b:
+			elif self.id == 0x1e:
+				info['op'] = '.'
+				space = False
+
+			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
+
+		elif self.id == 0x19:
+			info['name'] = 'consume'
+			desc = 'consume R'
+
+		elif self.id in (0x2a, 0x2b):
+			info['name'] = 'var'
+			if self.id == 0x2b:
 				scope = 'global'
-			elif scope == 0x2a:
+			elif self.id == 0x2a:
 				scope = 'local'
-			else:
-				raise ParseError('Var instr with unkown scope {}'.format(self))
 			info['scope'] = scope
-			vid = parseInt(self.data[2:])
-			info['id'] = vid
-			desc = scope + ' #' + str(vid)
+			info['id'] = self.offset
+			desc = '{name} {scope} #{id}'.format(**info)
 
-		elif self.type == 'goto':
-			cond = self.data[1]
-			if cond == 0x25:
+		elif self.id in (0x25, 0x26, 0x27):
+			info['name'] = 'goto'
+			if self.id == 0x25:
 				cond = True
-			elif cond == 0x26:
+			elif self.id == 0x26:
 				cond = False
-			elif cond == 0x27:
+			elif self.id == 0x27:
 				cond = None
-			else:
-				raise ParseError('GotoIf instr with unkown cond {}'.format(self))
 			info['cond'] = cond
-			pos = parseInt(self.data[2:])
-			info['to'] = pos
-			desc = ''
-			if cond is not None:
-				desc = 'if W1 == {} '.format(cond)
-			desc += 'goto 0x{:04X}'.format(pos)
-
-		elif self.type == 'return':
-			cod = self.data[1:]
-			if cod == b'\x20\x00\x00\x00':
-				desc = 'generic'
-				info['mode'] = 'generic'
-			elif cod == b'\x24\x02\x00\x00' or cod == b'\x24\x03\x00\x00':
-				desc = 'end program'
-				info['mode'] = 'program'
+			info['to'] = self.offset
+			if info['cond'] is None:
+				cond = ''
 			else:
-				raise ParseError('Unexpected return instr {}'.format(self))
+				cond = ' if R == {} (consume R)'.format(info['cond'])
+			desc = '{name} 0x{to:04X}{cond}'.format(cond=cond, **info)
+
+		elif self.id == 0x20:
+			info['name'] = 'progend'
+			desc = 'end program'
+
+		elif self.id == 0x24:
+			info['name'] = 'blockend'
+			info['num'] = self.offset
+			desc = 'end block, del {num} from W'.format(**info)
 
 		else:
 			desc = ''
@@ -637,9 +774,8 @@ class Instruction():
 			return base
 
 	def __repr__(self):
-		hx = ' '.join(['{:02X}'.format(c) for c in self.data])
-		#hb = ' '.join(['{:08b}'.format(c) for c in self.data[:2]])
-		return hx + ' - ' + '{:>6s}'.format(self.type)
+		hx = ' '.join(['{:02X}'.format(c) for c in self.raw])
+		return hx + ' - ' + '{:>6s}'.format(self.TOKENS[self.id])
 
 
 class ConstantsSection(Section):

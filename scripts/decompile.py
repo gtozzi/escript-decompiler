@@ -221,7 +221,8 @@ class ECLFile:
 		# Utility functions
 		def ind(row, mod=0):
 			''' adds indentation to a row '''
-			return '\t' * (len(blk)+mod) + row
+			tabs = '\t' * (len(blk)+mod)
+			return tabs + row.replace('\t', tabs + '\t')
 		def quote(string):
 			''' quotes a string '''
 			#TODO: fixme
@@ -237,23 +238,9 @@ class ECLFile:
 				yield('use {};'.format(u.name))
 		yield('')
 
-		# Start program section, if specified
-		if self.program:
-			parms = []
-			# Expect fist instructions to define program variable names
-			for i in range(idx,idx+self.program.args):
-				inst = self.instr[i]
-				desc, info = inst.parse(self.const, self.usages)
-				if info['name'] != 'getarg':
-					self.log.critical('Assign program instruction expected')
-				parms.append(info['arg'])
-				loc.append(info['arg'])
-			yield('program decompiled(' + ', '.join(parms) + ')')
-
-			blk.append({'type': 'program'})
-			idx += self.program.args
-
 		# Parse the instructions
+		progParms = None # Will contain parameters for program block until they are outputted
+
 		while idx < len(self.instr):
 			inst = self.instr[idx]
 			desc, info = inst.parse(self.const, self.usages)
@@ -269,7 +256,20 @@ class ECLFile:
 			except KeyError:
 				name = None
 
-			if name == 'run':
+			if progParms is not None and name != 'getarg':
+				# Outputs program directive
+				yield('program decompiled(' + ', '.join(progParms) + ')')
+				progParms = None
+
+			if name == 'getarg':
+				if not len(blk) or blk[-1]['type'] != 'program':
+					# Auto-starting program block
+					progParms = []
+					blk.append({'type': 'program'})
+				progParms.append(info['arg'])
+				loc.append(info['arg'])
+
+			elif name == 'run':
 				parms = []
 				for i in range(info['func'].parm):
 					parms.insert(0, reg.pop())
@@ -323,6 +323,15 @@ class ECLFile:
 					self.log.error('unimplemented assign {op}'.format(**info))
 				reg.append(res)
 
+			elif name == 'array':
+				if info['act'] == 'start':
+					reg.append(Array())
+				elif info['act'] == 'append':
+					val = reg.pop()
+					reg[-1].append(val)
+				else:
+					self.log.error('unimplemented array {act}'.format(**info))
+
 			elif name == 'consume':
 				r = reg.pop()
 				yield(ind('{};'.format(r)))
@@ -364,6 +373,24 @@ class ECLFile:
 				else:
 					self.log.error('unimplemented goto')
 
+			elif name == 'foreach':
+				if info['act'] == 'start':
+					what = reg.pop()
+					it = Iterator(len(blk))
+					loc.append(it)
+					loc.append(what)
+					loc.append(str(it))
+					reg.append(it)
+					reg.append(what)
+					reg.append(str(it))
+					yield(ind('foreach {} in {}'.format(reg[-1], reg[-2])))
+					blk.append({'type': 'foreach'})
+				elif info['act'] == 'step':
+					# Just ignore it
+					pass
+				else:
+					self.log.error('unimplemented foreach')
+
 			elif name == 'progend':
 				if idx == len(self.instr)-1:
 					# This is the final instruction, just ignore it
@@ -378,9 +405,11 @@ class ECLFile:
 						del reg[i]
 					except IndexError:
 						self.log.warning('Unable to consume index {}'.format(i))
-				out = "end{}".format(blk[-1]['type'])
-				del blk[-1]
-				yield(ind(out))
+				if len(blk):
+					yield(ind("end{}".format(blk[-1]['type']), -1))
+					del blk[-1]
+				else:
+					self.log.warning('No block to end')
 
 			elif name is None:
 				self.log.error('unknown instruction {}'.format(inst))
@@ -395,6 +424,24 @@ class ECLFile:
 class W(collections.UserList):
 	''' Holder class for W registers '''
 	pass
+
+class Array(collections.UserList):
+	''' Utility class to represent an array '''
+	def __str__(self, ind=0):
+		ret = '{' + os.linesep
+		for v in self:
+			ret += '\t'*(ind+1) + v + ',' + os.linesep
+		ret += '\t'*ind + '}'
+		return ret
+
+class Iterator():
+	''' This represents an iterator '''
+	def __init__(self, depth):
+		self.depth = depth
+	def __repr__(self):
+		return '<Iterator #{}>'.format(self.depth)
+	def __str__(self):
+		return 'key{}'.format(self.depth)
 
 class Section:
 	''' Base class for a generic section '''
@@ -582,13 +629,13 @@ class Instruction():
 		'TOK_IN',
 		'TOK_LOCALVAR',
 		'TOK_GLOBALVAR',
-		'INS_INITFOREACH',
+		'INS_INITFOREACH',                                         # 53 0x35
 		'INS_STEPFOREACH',
 		'INS_CASEJMP',
 		'INS_GET_ARG',                                             # 56 0x38
-		'TOK_ARRAY',
 
-		'???', # Fllling an hole
+		'TOK_ARRAY_APPEND', # Just guessing
+		'TOK_ARRAY',                                               # 58 0x3a
 
 		'INS_CALL_METHOD',                                         # 59 0x3b
 
@@ -769,6 +816,14 @@ class Instruction():
 				cond = ' if R == {} (consume R)'.format(info['cond'])
 			desc = '{name} 0x{to:04X}{cond}'.format(cond=cond, name=info['name'], to=info['to'])
 
+		elif self.id in (0x35, 0x36):
+			info['name'] = 'foreach'
+			if self.id == 0x35:
+				info['act'] = 'start'
+			elif self.id == 0x36:
+				info['act'] = 'step'
+			desc = '{act} {name}'.format(**info)
+
 		elif self.id == 0x20:
 			info['name'] = 'progend'
 			desc = 'end program'
@@ -777,6 +832,14 @@ class Instruction():
 			info['name'] = 'blockend'
 			info['num'] = self.offset
 			desc = 'end block, del {num} from W'.format(**info)
+
+		elif self.id in (0x39, 0x3a):
+			info['name'] = 'array'
+			if self.id == 0x39:
+				info['act'] = 'append'
+			elif self.id == 0x3a:
+				info['act'] = 'start'
+			desc = '{name} {act}'.format(**info)
 
 		else:
 			desc = ''

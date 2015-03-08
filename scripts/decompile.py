@@ -8,6 +8,7 @@ import os, sys
 import logging
 import string
 import collections
+import re
 
 
 def parseInt(val):
@@ -452,6 +453,49 @@ class ECLFile:
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
 			idx += 1
+
+	def optimize(self, source):
+		''' Optimizes a built source '''
+		src = list(source)
+		ret = src[:]
+
+		valRe = re.compile('^(?P<ind>\s*)var (?P<var>[a-z0-9]+);$')
+		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := .+;$')
+		whileRe = re.compile('^(?P<ind>\s*)while\( (?P<var>[a-z0-9]+) (?P<cond>.*)\)$')
+		endwhileRe = re.compile('^(?P<ind>\s*)endwhile$')
+
+		i = -1
+		for line in src:
+			i += 1
+
+			# Merge together variable declaration and next assignment
+			assign = assignRe.match(line)
+			if assign:
+				val = valRe.match(src[i-1])
+				if val and assign.group('var') == val.group('var'):
+					ret[i] = assign.group('ind') + 'var ' + src[i]
+					ret[i-1] = None
+
+			# Convert while into for loops
+			whil = whileRe.match(line)
+			if whil:
+				assign = assignRe.match(src[i-1])
+				if assign:
+					k = i
+					while True:
+						k += 1
+						ew = endwhileRe.match(src[k])
+						if ew:
+							end = k
+							break
+					ass2 = assignRe.match(src[end-1])
+					if ass2:
+						ret[i] = whil.group('ind') + 'for( {} {} {}; {} )'.format(src[i-1].strip(), whil.group('var'), whil.group('cond'), src[end-1].strip().rstrip(';'))
+						ret[i-1] = None
+						ret[end-1] = None
+						ret[end] = ew.group('ind') + 'endfor'
+
+		return [ i for i in ret if i is not None ]
 
 class W(collections.UserList):
 	''' Holder class for W registers '''
@@ -1033,5 +1077,5 @@ if __name__ == '__main__':
 		for l in ecl.dump():
 			print(l)
 	if args.source:
-		for l in ecl.source():
+		for l in ecl.optimize(ecl.source()):
 			print(l)

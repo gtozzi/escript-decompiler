@@ -1016,6 +1016,8 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument('ecl_file', help='The compiled script')
+	parser.add_argument('-d', '--dump', action='store_true', help='Dump disassembled program')
+	parser.add_argument('-s', '--source', action='store_true', help='Dump disassembled source')
 	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
 	args = parser.parse_args()
 
@@ -1027,7 +1029,9 @@ if __name__ == '__main__':
 	log.addHandler(ch)
 
 	ecl = ECLFile(args.ecl_file)
-	for l in ecl.dump():
-		print(l)
-	for l in ecl.source():
-		print(l)
+	if args.dump:
+		for l in ecl.dump():
+			print(l)
+	if args.source:
+		for l in ecl.source():
+			print(l)

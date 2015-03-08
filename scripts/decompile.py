@@ -231,6 +231,12 @@ class ECLFile:
 			''' removes quotes from a quoted string '''
 			#TODO: fixme
 			return string[1:-1]
+		def getParms(num):
+			''' retrieves num params from W '''
+			parms = []
+			for i in range(num):
+				parms.insert(0, reg.pop())
+			return parms
 
 		# Start with usages
 		for u in self.usages:
@@ -245,8 +251,8 @@ class ECLFile:
 			inst = self.instr[idx]
 			desc, info = inst.parse(self.const, self.usages)
 
-			# End if section if needed
-			if blk and blk[-1]['type'] == 'if' and blk[-1]['end'] == idx:
+			# End if sections if needed
+			while blk and blk[-1]['type'] == 'if' and blk[-1]['end'] == idx:
 				del blk[-1]
 				yield(ind('endif'))
 
@@ -270,16 +276,16 @@ class ECLFile:
 				loc.append(info['arg'])
 
 			elif name == 'run':
-				parms = []
-				for i in range(info['func'].parm):
-					parms.insert(0, reg.pop())
+				parms = getParms(info['func'].parm)
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
 				call = '{}({})'.format(info['func'].name, ', '.join(parms))
 				reg.append(call)
 
-			elif inst.type == 'method':
-				reg.append('{}.{}({})'.format(reg[0], name, reg[-1]))
+			elif name == 'method':
+				parms = getParms(info['parm'])
+				r = reg.pop()
+				reg.append('{}.{}({})'.format(r, info['method'], ', '.join(parms)))
 
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':
@@ -307,20 +313,28 @@ class ECLFile:
 				elif info['op'] == '.':
 					# Access a property
 					res = '{}.{}'.format(l, unquote(r))
-				elif info['op'] == '+':
-					# Concatenation
-					res = '{} + {}'.format(l, r)
-				elif info['op'] == '=':
-					# Comparison
-					res = '{} = {}'.format(l, r)
-				elif info['op'] == '!=':
-					# Reverse comparison
-					res = '{} != {}'.format(l, r)
+				elif info['op'] in ('+', '-', '*', '/'):
+					# Arithmetic: concatenation/addition, subtraction, multiplication, division
+					# Concatenation / Addition
+					res = '{} {} {}'.format(l, info['op'], r)
+				elif info['op'] in ('=', '!=', '<','<=','>','>='):
+					# Comparison: equal, not equal, lesser than, lesser or equal than,
+					#             greater than, greater or equal than
+					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] == '[]':
 					# Array subscription
 					res = '{}[{}]'.format(l, r)
 				else:
 					self.log.error('unimplemented assign {op}'.format(**info))
+				reg.append(res)
+
+			elif name == 'unary':
+				r = reg.pop()
+				if info['op'] == '!':
+					# Logical not
+					res = '{} {}'.format(info['op'], r)
+				else:
+					self.log.error('unimplemented unary {op}'.format(**info))
 				reg.append(res)
 
 			elif name == 'array':
@@ -349,27 +363,40 @@ class ECLFile:
 				yield(ind('var {};'.format(name)))
 
 			elif name == 'goto':
-				if info['cond'] is not None:
-					# Conditional jump starts an if section
-					op = ''
-					if not info['cond']:
-						op = '! '
-					yield(ind('if( {}{} )'.format(op, reg.pop())))
+				# A goto may be part of an if block or of a loop (for/while)
+				# proceed with some logical analysis and guessing
+				if info['cond'] is False:
+					# Conditional jump if false starts an if or while section
 					# Expect to find an unconditional jump at to-1. This jump leads
-					# to the end of the "if section"
-					goto = self.instr[info['to']-1]
-					gd, gi = goto.parse(self.const, self.usages)
-					el = None
+					# to the end of the "if section" on an if block or back to the
+					# block definition in a while block
+					to = self.instr[info['to']-1]
+					toDescr, toInfo = to.parse(self.const, self.usages)
+					elseInstr = None
 					end = info['to']
-					if gi['name'] == 'goto':
-						# Also found an else statement
-						el = info['to'] - 1
-						gd, gi = goto.parse(self.const, self.usages)
-						end = gi['to']
-					blk.append({'type': 'if', 'else': el, 'end': end})
+					if toInfo['name'] == 'goto':
+						# This could be the "else" statement on an if or the jump back
+						# on a while
+						if toInfo['to'] > idx:
+							# Jumping forward: this should be an else statement
+							elseInstr = info['to'] - 1
+							gd, gi = to.parse(self.const, self.usages)
+							end = gi['to']
+						else:
+							# Jumping backward: this should be the endwhile statement
+							typ = 'while'
+					else:
+						# No mathing jump found, this is a simple if block
+						typ = 'if'
+					yield(ind('{}( {} )'.format(typ, reg.pop())))
+					blk.append({'type': typ, 'else': elseInstr, 'end': end})
 				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
 					# This is the else jump of the current "if" statement
 					yield(ind('else',-1))
+				elif info['cond'] is None and blk and blk[-1]['type'] == 'while' and blk[-1]['end']-1 == idx:
+					# This is the end jump of the current "while" statement
+					yield(ind('endwhile',-1))
+					del blk[-1]
 				else:
 					self.log.error('unimplemented goto')
 
@@ -573,7 +600,7 @@ class Instruction():
 		'TOK_INSERTINTO',
 
 		# comparison operators
-		'TOK_LESSTHAN',
+		'TOK_LESSTHAN',                                            # 13 0x0d
 		'TOK_LESSEQ',
 		'TOK_GRTHAN',
 		'TOK_GREQ',
@@ -588,7 +615,7 @@ class Instruction():
 		# unary operators
 		'TOK_UNPLUS',
 		'TOK_UNMINUS',
-		'TOK_LOG_NOT',
+		'TOK_LOG_NOT',                                             # 23 0x17
 		'TOK_BITWISE_NOT',
 
 		'TOK_CONSUMER',                                            # 25 0x19
@@ -717,8 +744,9 @@ class Instruction():
 
 		elif self.id == 0x3b:
 			info['name'] = 'method'
-			info['method'] = const.getStr(pos)
-			desc = 'L := R.{method}()'.fotmat(**info)
+			info['method'] = const.getStr(self.offset)
+			info['parm'] = int(self.type)
+			desc = 'L := R.{method}()'.format(**info)
 
 		elif self.id in (0x00,0x01,0x02, 0x33,0x34):
 			info['name'] = 'load'
@@ -753,7 +781,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x13,0x14, 0x1a, 0x1e, 0x42):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x13,0x14, 0x1a, 0x1e, 0x42):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -767,6 +795,15 @@ class Instruction():
 
 			elif self.id == 0x08:
 				info['op'] = ':='
+
+			elif self.id == 0x0d:
+				info['op'] = '<'
+			elif self.id == 0x0e:
+				info['op'] = '<='
+			elif self.id == 0x0f:
+				info['op'] = '>'
+			elif self.id == 0x10:
+				info['op'] = '>='
 
 			elif self.id == 0x13:
 				info['op'] = '='
@@ -786,6 +823,12 @@ class Instruction():
 
 			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
 
+		elif self.id in (0x17,):
+			info['name'] = 'unary'
+			if self.id == 0x17:
+				info['op'] = '!'
+			desc = '{name} R := {op} R'.format(**info)
+
 		elif self.id == 0x19:
 			info['name'] = 'consume'
 			desc = 'consume R'
@@ -803,9 +846,9 @@ class Instruction():
 		elif self.id in (0x25, 0x26, 0x27):
 			info['name'] = 'goto'
 			if self.id == 0x25:
-				cond = True
-			elif self.id == 0x26:
 				cond = False
+			elif self.id == 0x26:
+				cond = True
 			elif self.id == 0x27:
 				cond = None
 			info['cond'] = cond

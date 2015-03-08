@@ -216,7 +216,7 @@ class ECLFile:
 		idx = 0 # Index of next instruction to be read (PC, Program Counter)
 		glo = [] # Map of global var IDs => names
 		loc = [] # Map of local var IDs => names
-		reg = W() # Map of W registers (ValueStack)
+		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
 
 		# Utility functions
 		def ind(row, mod=0):
@@ -300,12 +300,25 @@ class ECLFile:
 				if info['op'] == ':=':
 					# Assign left
 					res = '{} := {}'.format(l, r)
+				elif info['op'] == ':=&':
+					# Assign byRef
+					res = '{} := {}'.format(l, r)
+					yield(ind("{};".format(res)))
 				elif info['op'] == '.':
 					# Access a property
 					res = '{}.{}'.format(l, unquote(r))
 				elif info['op'] == '+':
 					# Concatenation
 					res = '{} + {}'.format(l, r)
+				elif info['op'] == '=':
+					# Comparison
+					res = '{} = {}'.format(l, r)
+				elif info['op'] == '!=':
+					# Reverse comparison
+					res = '{} != {}'.format(l, r)
+				elif info['op'] == '[]':
+					# Array subscription
+					res = '{}[{}]'.format(l, r)
 				else:
 					self.log.error('unimplemented assign {op}'.format(**info))
 				reg.append(res)
@@ -326,19 +339,20 @@ class ECLFile:
 				reg.append(name)
 				yield(ind('var {};'.format(name)))
 
-			elif inst.type == 'goto':
+			elif name == 'goto':
 				if info['cond'] is not None:
 					# Conditional jump starts an if section
 					op = ''
 					if not info['cond']:
 						op = '! '
-					yield(ind('if( {}{} )'.format(op, reg[0])))
+					yield(ind('if( {}{} )'.format(op, reg.pop())))
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if section"
 					goto = self.instr[info['to']-1]
+					gd, gi = goto.parse(self.const, self.usages)
 					el = None
 					end = info['to']
-					if goto.type == 'goto':
+					if gi['name'] == 'goto':
 						# Also found an else statement
 						el = info['to'] - 1
 						gd, gi = goto.parse(self.const, self.usages)
@@ -360,9 +374,13 @@ class ECLFile:
 			elif name == 'blockend':
 				# Output registers before deleting them, from left to right
 				for i in range(0-info['num'],0):
-					yield(ind('{};'.format(reg[i])))
-					del reg[i]
+					try:
+						del reg[i]
+					except IndexError:
+						self.log.warning('Unable to consume index {}'.format(i))
+				out = "end{}".format(blk[-1]['type'])
 				del blk[-1]
+				yield(ind(out))
 
 			elif name is None:
 				self.log.error('unknown instruction {}'.format(inst))
@@ -370,7 +388,7 @@ class ECLFile:
 			else:
 				self.log.error('unimplemented instruction {}'.format(inst))
 
-			self.log.debug("%02X: %s, W: %s", inst.id, desc, reg)
+			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
 			idx += 1
 
@@ -517,7 +535,7 @@ class Instruction():
 		'TOK_OR',
 
 		# equalite/inequality operators
-		'TOK_EQUAL',
+		'TOK_EQUAL',                                               # 19 0x13
 		'TOK_NEQ',
 
 		# unary operators
@@ -528,7 +546,7 @@ class Instruction():
 
 		'TOK_CONSUMER',                                            # 25 0x19
 
-		'TOK_ARRAY_SUBSCRIPT',
+		'TOK_ARRAY_SUBSCRIPT',                                     # 26 0x1a
 
 		'???', # Fllling an hole
 
@@ -688,7 +706,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x1e):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x13,0x14, 0x1a, 0x1e, 0x42):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -703,9 +721,21 @@ class Instruction():
 			elif self.id == 0x08:
 				info['op'] = ':='
 
+			elif self.id == 0x13:
+				info['op'] = '='
+			elif self.id == 0x14:
+				info['op'] = '!='
+
+			elif self.id == 0x1a:
+				info['op'] = '[]'
+				space = False
+
 			elif self.id == 0x1e:
 				info['op'] = '.'
 				space = False
+
+			elif self.id == 0x42:
+				info['op'] = ':=&'
 
 			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
 
@@ -737,7 +767,7 @@ class Instruction():
 				cond = ''
 			else:
 				cond = ' if R == {} (consume R)'.format(info['cond'])
-			desc = '{name} 0x{to:04X}{cond}'.format(cond=cond, **info)
+			desc = '{name} 0x{to:04X}{cond}'.format(cond=cond, name=info['name'], to=info['to'])
 
 		elif self.id == 0x20:
 			info['name'] = 'progend'
@@ -843,6 +873,28 @@ class ParseError(RuntimeError):
 	pass
 
 
+class LogFormatter(logging.Formatter):
+	''' Formats log into colored output for better readability '''
+
+	COLORS = {
+		'CRITICAL': (1, 91),
+		'ERROR': (1, 31),
+		'WARNING': (1, 33),
+		'INFO': (0, 32),
+		'DEBUG': (0, 34),
+	}
+
+	def __init__(self, fmt, color=True):
+		super().__init__(fmt)
+		self.color = color
+
+	def format(self, record):
+		msg = super().format(record)
+		if self.color:
+			msg = "\033[{};{}m".format(*self.COLORS[record.levelname]) + msg + "\033[0m"
+		return msg
+
+
 if __name__ == '__main__':
 	import argparse
 
@@ -851,7 +903,12 @@ if __name__ == '__main__':
 	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
 	args = parser.parse_args()
 
-	logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+	log = logging.getLogger()
+	log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+	ch = logging.StreamHandler()
+	fmt = LogFormatter("%(levelname)s:%(name)s:%(message)s")
+	ch.setFormatter(fmt)
+	log.addHandler(ch)
 
 	ecl = ECLFile(args.ecl_file)
 	for l in ecl.dump():

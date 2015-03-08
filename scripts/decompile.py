@@ -317,6 +317,9 @@ class ECLFile:
 					# Arithmetic: concatenation/addition, subtraction, multiplication, division
 					# Concatenation / Addition
 					res = '{} {} {}'.format(l, info['op'], r)
+				elif info['op'] in ('&&', '||'):
+					# Logical: and, or
+					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] in ('=', '!=', '<','<=','>','>='):
 					# Comparison: equal, not equal, lesser than, lesser or equal than,
 					#             greater than, greater or equal than
@@ -365,11 +368,12 @@ class ECLFile:
 			elif name == 'goto':
 				# A goto may be part of an if block or of a loop (for/while)
 				# proceed with some logical analysis and guessing
-				if info['cond'] is False:
-					# Conditional jump if false starts an if or while section
+				if info['cond'] is not None:
+					# Conditional jump starts an if or while section
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if section" on an if block or back to the
 					# block definition in a while block
+					op = '! ' if info['cond'] else ''
 					to = self.instr[info['to']-1]
 					toDescr, toInfo = to.parse(self.const, self.usages)
 					elseInstr = None
@@ -388,7 +392,7 @@ class ECLFile:
 					else:
 						# No mathing jump found, this is a simple if block
 						typ = 'if'
-					yield(ind('{}( {} )'.format(typ, reg.pop())))
+					yield(ind('{}( {}{} )'.format(typ, op, reg.pop())))
 					blk.append({'type': typ, 'else': elseInstr, 'end': end})
 				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
 					# This is the else jump of the current "if" statement
@@ -423,7 +427,8 @@ class ECLFile:
 					# This is the final instruction, just ignore it
 					pass
 				else:
-					self.log.error('unimplemented progend')
+					# This is a return out of the program block
+					yield(ind('return;'))
 
 			elif name == 'blockend':
 				# Output registers before deleting them, from left to right
@@ -605,7 +610,7 @@ class Instruction():
 		'TOK_GRTHAN',
 		'TOK_GREQ',
 
-		'TOK_AND',
+		'TOK_AND',                                                 # 17 0x11
 		'TOK_OR',
 
 		# equalite/inequality operators
@@ -781,7 +786,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x13,0x14, 0x1a, 0x1e, 0x42):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a, 0x1e, 0x42):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -804,6 +809,11 @@ class Instruction():
 				info['op'] = '>'
 			elif self.id == 0x10:
 				info['op'] = '>='
+
+			elif self.id == 0x11:
+				info['op'] = '&&'
+			elif self.id == 0x12:
+				info['op'] = '||'
 
 			elif self.id == 0x13:
 				info['op'] = '='

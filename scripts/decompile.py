@@ -324,6 +324,7 @@ class ECLFile:
 				# Will start it before first local variable is declared
 				yield('program decompiled()')
 				blk.append(Block('program', blk))
+				progStarted = True
 
 			if idx in fun:
 				# New function starts here

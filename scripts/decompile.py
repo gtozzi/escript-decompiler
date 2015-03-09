@@ -585,7 +585,7 @@ class ECLFile:
 
 		# Outputs program block if it still has not been started yet.
 		# Looks like it doesn't make any difference in the final binary compiled file
-		if not progStarted:
+		if self.program is not None and not progStarted:
 			yield('')
 			yield('// Decompiler couldn\'t find program block start, so it\'s placing it here')
 			yield('// Looks like it doesn\'t make any difference in the compiled version anyway...')

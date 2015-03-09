@@ -218,6 +218,7 @@ class ECLFile:
 		glo = [] # Map of global var IDs => names
 		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
 		fun = [] # There is not token for a function start, so this will store function start idxs
+		used = [] # List of used usages, to workaround a compiler bug (see below)
 
 		# Utility functions
 		def ind(row, mod=0):
@@ -340,6 +341,9 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
+				if not info['func'] in used:
+					# Will use this later to output unused functions
+					used.append(info['func'])
 				parms = getParms(info['func'].parm)
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
@@ -563,6 +567,29 @@ class ECLFile:
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
 			idx += 1
+
+		# Outputs unused usages: since the compiler is purging unused functions but
+		# not unused usages (from the usages section), this is necessary to make
+		# the binary compiled from the decompiled source identical to the original
+		# one
+		unused = []
+		for u in self.usages:
+			for f in u.func:
+				if f not in used:
+					unused.append(f)
+		if unused:
+			yield('')
+			yield('')
+			yield('// Dummy function, this is never invoked')
+			yield('// This is necessary to make the compiled decompiled source binary equal')
+			yield('// to original because of a bug in the compiler (optimizer). This can be')
+			yield('// safely deleted without any effect on the code execution')
+			yield('function decompiler_dummy_function(p)')
+			for f in unused:
+				yield('\t{}({});'.format(f.name, ', '.join(['p'] * f.parm)))
+			yield('endfunction')
+			yield('')
+
 
 	def optimize(self, source):
 		''' Optimizes a built source '''

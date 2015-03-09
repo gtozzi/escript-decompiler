@@ -23,6 +23,7 @@ if __name__ == '__main__':
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument('root', type=check_folder, help='The POL\'s root folder')
+	parser.add_argument('-a', '--halt', action='store_true', help='Halt on error')
 	args = parser.parse_args()
 
 	logging.basicConfig(level=logging.WARNING)
@@ -46,7 +47,10 @@ if __name__ == '__main__':
 				except Exception as e:
 					decerr += 1
 					print('ERROR: {}'.format(e))
-					continue
+					if args.halt:
+						raise e
+					else:
+						continue
 
 				out = tempfile.NamedTemporaryFile('wt', prefix='decompileall_', suffix='.src', delete=False)
 				for line in src:

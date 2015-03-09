@@ -322,7 +322,7 @@ class ECLFile:
 
 			if funcParms is not None and name != 'poparg':
 				# Outputs user function directive
-				yield('function {}('.format(funcName) + ', '.join(funcParms) + ')')
+				yield('function {}('.format(funcName) + ', '.join(reversed(funcParms)) + ')')
 				funcParms = None
 				funcName = None
 
@@ -471,6 +471,7 @@ class ECLFile:
 							elseInstr = info['to'] - 1
 							gd, gi = to.parse(self.const, self.usages)
 							end = gi['to']
+							typ = 'if'
 						else:
 							# Jumping backward: this should be the endwhile statement
 							typ = 'while'

@@ -207,6 +207,44 @@ class ECLFile:
 		''' Try to build back the source code for the script
 		@return list of lines
 		'''
+
+		# Preparatory step: scan for functions (there is no token for function start)
+		fun = {} # idx: number of parameters
+		idx = 0
+		while idx < len(self.instr):
+			inst = self.instr[idx]
+			desc, info = inst.parse(self.const, self.usages)
+
+			try:
+				name = info['name']
+			except KeyError:
+				name = None
+
+			if name == 'function':
+				if info['to'] not in fun.keys():
+					# Found a new function, scan it
+					fun[info['to']] = 0
+					idf = info['to']
+					while idf < len(self.instr):
+						ins = self.instr[idf]
+						des, inf = ins.parse(self.const, self.usages)
+						try:
+							nam = inf['name']
+						except KeyError:
+							nam = None
+
+						if nam == 'return':
+							break
+						elif nam == 'poparg':
+							fun[info['to']] += 1
+
+						idf += 1
+
+			idx += 1
+
+		self.log.debug('Functions: %s', fun)
+
+		# Output header
 		yield('// Source decompiled from binary using decompile.py')
 		yield('// written by Scripter Bodom @ ZHI Time Warp shard <bodom@discosucks.it>')
 		yield('// with the precious help of Scripter Evolution, from the same shard')
@@ -217,7 +255,6 @@ class ECLFile:
 		idx = 0 # Index of next instruction to be read (PC, Program Counter)
 		glo = [] # Map of global var IDs => names
 		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
-		fun = [] # There is not token for a function start, so this will store function start idxs
 		used = [] # List of used usages, to workaround a compiler bug (see below)
 
 		# Utility functions and vars
@@ -295,7 +332,6 @@ class ECLFile:
 		funcParms = None # Will contain parameters for user function block until outputted
 		funcName = None # Will contain function name until outputted
 		progStarted = False # Will be true when program block has been started
-		callParms = [] # Contains parameters to be used for next function call
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -326,7 +362,7 @@ class ECLFile:
 				blk.append(Block('program', blk))
 				progStarted = True
 
-			if idx in fun:
+			if idx in fun.keys():
 				# New function starts here
 				if len(blk) and blk[-1].type == 'function':
 					# Close the previous function
@@ -372,14 +408,16 @@ class ECLFile:
 				reg.append('{}.{}({})'.format(r, info['method'], ', '.join([str(p) for p in parms])))
 
 			elif name == 'makelocal':
-				# "Prepare" parameters for next function call
-				callParms = reg[:]
+				# "Prepare" parameters for next function call, try to just ignore it
+				# and do all the job on the call
+				pass
 
 			elif name == 'function':
-				if info['to'] not in fun:
-					fun.append(info['to'])
-				reg.append('func{}({})'.format(info['to'], ', '.join(callParms)))
-				callParms = []
+				if fun[info['to']]:
+					parms = reg[0 - fun[info['to']]:]
+				else:
+					parms = []
+				reg.append('func{}({})'.format(info['to'], ', '.join(parms)))
 
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':

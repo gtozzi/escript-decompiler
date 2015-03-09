@@ -238,6 +238,45 @@ class ECLFile:
 			for i in range(num):
 				parms.insert(0, reg.pop())
 			return parms
+		def enclose(left, op, right):
+			''' add parenthesys if needed '''
+			ops = {
+				':=': 50,
+				'=':  40,
+				'=>': 40,
+				'>':  40,
+				'<=': 40,
+				'<':  40,
+				'!=': 40,
+				'&&': 30,
+				'||': 30,
+				'*':  20,
+				'/':  20,
+				'-':  10,
+				'+': 10,
+			}
+			exRe = re.compile('\(.*\)')
+
+			# Calculate left, right, and operator power
+			opow = ops[op]
+			lpow = 100
+			l = exRe.sub('', left)
+			for o in ops.keys():
+				if l.find(o) != -1 and ops[o] < lpow:
+					lpow = ops[o]
+			rpow = 100
+			r = exRe.sub('', right)
+			for o in ops.keys():
+				if r.find(o) != -1 and ops[o] < rpow:
+					rpow = ops[o]
+
+			if lpow < opow:
+				left = '({})'.format(left)
+
+			if rpow <= opow:
+				right = '({})'.format(right)
+
+			return left, right
 
 		# Start with usages
 		for u in self.usages:
@@ -330,6 +369,7 @@ class ECLFile:
 			elif name == 'assign':
 				r = reg.pop()
 				l = reg.pop()
+
 				if info['op'] == ':=':
 					# Assign left
 					res = '{} := {}'.format(l, r)
@@ -343,13 +383,16 @@ class ECLFile:
 				elif info['op'] in ('+', '-', '*', '/'):
 					# Arithmetic: concatenation/addition, subtraction, multiplication, division
 					# Concatenation / Addition
+					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] in ('&&', '||'):
 					# Logical: and, or
+					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] in ('=', '!=', '<','<=','>','>='):
 					# Comparison: equal, not equal, lesser than, lesser or equal than,
 					#             greater than, greater or equal than
+					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] == '[]':
 					# Array subscription

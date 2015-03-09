@@ -216,8 +216,8 @@ class ECLFile:
 		blk = [] # Last block is the current block, also used as indentation level
 		idx = 0 # Index of next instruction to be read (PC, Program Counter)
 		glo = [] # Map of global var IDs => names
-		#loc = [] # Map of local var IDs => names
 		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
+		fun = [] # There is not token for a function start, so this will store function start idxs
 
 		# Utility functions
 		def ind(row, mod=0):
@@ -309,10 +309,20 @@ class ECLFile:
 				yield('program decompiled(' + ', '.join(progParms) + ')')
 				progParms = None
 
+			if idx in fun:
+				# New function starts here
+				if len(blk) and blk[-1].type == 'function':
+					# Close the previous function
+					del blk[-1]
+					yield(ind('endfunction'))
+					yield('')
+				funcParms = []
+				funcName = 'func{}'.format(idx)
+				blk.append(Block('function', None))
+
 			if funcParms is not None and name != 'poparg':
 				# Outputs user function directive
 				yield('function {}('.format(funcName) + ', '.join(funcParms) + ')')
-				loc = funcParms[:]
 				funcParms = None
 				funcName = None
 
@@ -326,10 +336,6 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'poparg':
-				if funcParms is None:
-					funcParms = []
-					funcName = 'func{}'.format(idx)
-					blk.append(Block('function', blk))
 				funcParms.append(info['arg'])
 				blk[-1].vars.append(info['arg'])
 
@@ -351,6 +357,8 @@ class ECLFile:
 
 			elif name == 'function':
 				#FIXME: compute real parms
+				if info['to'] not in fun:
+					fun.append(info['to'])
 				reg.append('func{}({})'.format(info['to'], ', '.join([reg[-1]])))
 
 			elif name == 'load':
@@ -538,14 +546,18 @@ class ECLFile:
 			elif name == 'return':
 				if not len(blk) or blk[-1].type != 'function':
 					self.log.critical('0x%04X: return outside function', idx)
-				yield('endfunction')
-				yield('')
+				yield(ind('return {};'.format(reg.pop())))
 
 			elif name is None:
 				self.log.error('0x%04X: unknown instruction %s', idx, inst)
 
 			else:
 				self.log.error('0x%04X: unimplemented instruction %s', idx, inst)
+
+
+			if idx == len(self.instr)-1 and len(blk) and blk[-1].type == 'function':
+				# Close opened function at the end of instructions
+				yield('endfunction')
 
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
@@ -646,7 +658,7 @@ class Block():
 	''' This represents an indentation/scope block '''
 	def __init__(self, type, blocks):
 		self.type = type
-		if len(blocks):
+		if blocks is not None and len(blocks):
 			# Copy vars from parent
 			self.vars = blocks[-1].vars[:]
 		else:

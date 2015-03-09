@@ -71,6 +71,10 @@ class ECLFile:
 		# Pointer position counter
 		self.pos = 0
 
+		# Will contain ECL version, from header
+		self.version = None
+		# Will contain number of globals, from header
+		self.globals = None
 		# Will contain the parsed "use" sections
 		self.usages = []
 		# Will contain the parsed instructions section
@@ -135,13 +139,10 @@ class ECLFile:
 		''' Parses the 6 bytes header field '''
 		if header[:2] != b'CE':
 			raise ParseError('This is not a valid eScript file, wrong magic number')
-		if header[2] != 2:
+		self.version = parseInt(header[2:4])
+		if self.version != 2:
 			raise ParseError('This is not a POL093 eScript file, wrong version number {}'.format(header[2]))
-		if header[3] != 0:
-			raise ParseError('unexpected non-zero byte 4 in header: {}'.format(header[3]))
-		self.log.warning('Unknown byte 5 in header is set to {:02X}'.format(header[4]))
-		if header[5] != 0:
-			raise ParseError('unexpected non-zero byte 6 in header: {}'.format(header[5]))
+		self.globals = parseInt(header[4:])
 
 	def getNextSection(self):
 		''' Scans the buffer and returns next section '''
@@ -182,6 +183,11 @@ class ECLFile:
 		''' return useful informations as a dump
 		@return list of lines
 		'''
+		yield('*** HEADER ***')
+		yield('ECL version {}'.format(self.version))
+		yield('{} global{}'.format(self.globals, 's' if self.globals != 1 else ''))
+		yield('')
+
 		yield('*** USAGES ***')
 		i = 0
 		for u in self.usages:
@@ -191,7 +197,7 @@ class ECLFile:
 
 		if self.program:
 			yield('*** PROGRAM ***')
-			yield('{} arguments'.format(self.program.args))
+			yield('{} argument{}'.format(self.program.args, 's' if self.program.args != 1 else ''))
 			yield('')
 
 		yield('*** {} INSTRUCTIONS ***'.format(len(self.instr)))

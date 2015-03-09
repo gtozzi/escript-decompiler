@@ -4,7 +4,7 @@
 Decompiles a whole POL project
 '''
 
-import os
+import os, sys
 import logging
 import tempfile
 import subprocess
@@ -30,50 +30,59 @@ if __name__ == '__main__':
 	logging.basicConfig(level=logging.WARNING)
 
 	start = datetime.datetime.now()
-	bins = 0
-	sizes = {} # Sizes of files with problems
-	status = {} # Results
+
+	# First scan all binaries and get their size
+	sizes = {}
 	for root, subdirs, files in os.walk(args.root):
 		for f in files:
 			if f.endswith('.ecl'):
-				bins += 1
 				binf = os.path.join(root,f)
-
-				print(binf)
-
 				sizes[binf] = os.stat(binf).st_size
 
-				try:
-					ecl = decompile.ECLFile(binf)
-					src = ecl.optimize(list(ecl.source()))
-				except Exception as e:
-					status[binf] = 'decerr'
-					print('ERROR: {}'.format(e))
-					if args.halt:
-						raise e
-					else:
-						continue
+	# Then proceed by size, from smaller to bigger (useful for debugging with -a flag)
+	status = {}
+	for binf in sorted(sizes, key=sizes.get):
+		print(binf)
 
-				out = tempfile.NamedTemporaryFile('wt', prefix='decompileall_', suffix='.src', delete=False)
-				for line in src:
-					out.write(line + '\n')
-				out.close()
+		try:
+			ecl = decompile.ECLFile(binf)
+			src = ecl.optimize(list(ecl.source()))
+		except Exception as e:
+			if args.halt:
+				print('DECOMPILE ERROR: {}'.format(e))
+				sys.exit(1)
+			else:
+				status[binf] = 'decerr'
+				continue
 
-				path = subprocess.check_output(['winepath', '-w', out.name]).decode().strip()
-				cmd = 'wine "' + os.path.join(args.root,'scripts','ecompile.exe') + '" "' + path + '"'
-				ret = subprocess.call(cmd, shell=True)
-				os.unlink(out.name)
-				if ret:
-					status[binf] = 'cmperr'
-					continue
+		out = tempfile.NamedTemporaryFile('wb', prefix='decompileall_', suffix='.src', delete=False)
+		for line in src:
+			out.write((line + '\n').encode('iso8859-15'))
+		out.close()
 
-				cmpf = out.name[:-4] + '.ecl'
-				if not filecmp.cmp(binf, cmpf):
-					status[binf] = 'diff'
-					continue
+		path = subprocess.check_output(['winepath', '-w', out.name]).decode().strip()
+		cmd = 'wine "' + os.path.join(args.root,'scripts','ecompile.exe') + '" "' + path + '"'
+		ret = subprocess.call(cmd, shell=True)
+		os.unlink(out.name)
+		if ret:
+			if args.halt:
+				print('COMPILE ERROR {}'.format(ret))
+				sys.exit(1)
+			else:
+				status[binf] = 'cmperr'
+				continue
 
-				status[binf] = 'ok'
-				del sizes[binf]
+		cmpf = out.name[:-4] + '.ecl'
+		if not filecmp.cmp(binf, cmpf):
+			if args.halt:
+				print('DIFF ERROR')
+				sys.exit(1)
+			else:
+				status[binf] = 'diff'
+				continue
+
+		status[binf] = 'ok'
+
 
 	print('')
 	s = list(status.values())
@@ -84,7 +93,3 @@ if __name__ == '__main__':
 	f = (bins, decerr,decerr/bins, cmperr,cmperr/bins, diff,diff/bins, ok,ok/bins)
 	print('Done. Took: {}'.format(datetime.datetime.now()-start))
 	print('Found: {}, Decompile Errors: {} ({:.1%}), Compile Errors: {} ({:.1%}), Different: {} ({:.1%}), OK: {} ({:.1%})'.format(*f))
-	print('Smallest files with problems:')
-	siz = sorted(sizes, key=sizes.get)
-	for i in range(1,6):
-		print('{}. {}: {}'.format(i, siz[i], status[siz[i]].upper()))

@@ -226,7 +226,22 @@ class ECLFile:
 		fun = [] # There is not token for a function start, so this will store function start idxs
 		used = [] # List of used usages, to workaround a compiler bug (see below)
 
-		# Utility functions
+		# Utility functions and vars
+		ops = {
+			':=': 50,
+			'=':  40,
+			'=>': 40,
+			'>':  40,
+			'<=': 40,
+			'<':  40,
+			'!=': 40,
+			'&&': 30,
+			'||': 30,
+			'*':  20,
+			'/':  20,
+			'-':  10,
+			'+': 10,
+		}
 		def ind(row, mod=0):
 			''' adds indentation to a row '''
 			tabs = '\t' * (len(blk)+mod)
@@ -247,21 +262,6 @@ class ECLFile:
 			return parms
 		def enclose(left, op, right):
 			''' add parenthesys if needed '''
-			ops = {
-				':=': 50,
-				'=':  40,
-				'=>': 40,
-				'>':  40,
-				'<=': 40,
-				'<':  40,
-				'!=': 40,
-				'&&': 30,
-				'||': 30,
-				'*':  20,
-				'/':  20,
-				'-':  10,
-				'+': 10,
-			}
 			exRe = re.compile('\(.*\)')
 
 			# Calculate left, right, and operator power
@@ -296,6 +296,7 @@ class ECLFile:
 		funcParms = None # Will contain parameters for user function block until outputted
 		funcName = None # Will contain function name until outputted
 		progStarted = False # Will be true when program block has been started
+		callParms = [] # Contains parameters to be used for next function call
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -372,14 +373,14 @@ class ECLFile:
 				reg.append('{}.{}({})'.format(r, info['method'], ', '.join(parms)))
 
 			elif name == 'makelocal':
-				# "Prepare" local parameters for function call, try to just ignore it
-				pass
+				# "Prepare" parameters for next function call
+				callParms = reg[:]
 
 			elif name == 'function':
-				#FIXME: compute real parms
 				if info['to'] not in fun:
 					fun.append(info['to'])
-				reg.append('func{}({})'.format(info['to'], ', '.join([reg[-1]])))
+				reg.append('func{}({})'.format(info['to'], ', '.join(callParms)))
+				callParms = []
 
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':
@@ -407,7 +408,13 @@ class ECLFile:
 					yield(ind("{};".format(res)))
 				elif info['op'] == '.':
 					# Access a property
-					res = '{}.{}'.format(l, unquote(r))
+					for o in ops.keys():
+						if r.find(o) != -1:
+							r = '({})'.format(r)
+							break
+					else:
+						r = unquote(r)
+					res = '{}.{}'.format(l, r)
 				elif info['op'] in ('+', '-', '*', '/'):
 					# Arithmetic: concatenation/addition, subtraction, multiplication, division
 					# Concatenation / Addition
@@ -432,6 +439,9 @@ class ECLFile:
 						res = '{},{}]'.format(l[:-1], r)
 					else:
 						self.log.error('0x%04X: unimplemented array subscription %s', idx, info)
+				elif info['op'] in ('.+', '.-'):
+					# Array add member, array del member
+					res = '{}{}{}'.format(l, info['op'], unquote(r))
 				else:
 					self.log.error('0x%04X: unimplemented assign %s', idx, info['op'])
 				reg.append(res)
@@ -543,7 +553,7 @@ class ECLFile:
 					yield('')
 				else:
 					# This is a return out of the program block
-					yield(ind('return;'))
+					yield(ind('return {};'.format(reg[-1] if len(reg) else '')))
 
 			elif name == 'blockend':
 				# Output registers before deleting them, from left to right
@@ -891,10 +901,11 @@ class Instruction():
 
 		'TOK_ARRAY_SUBSCRIPT',                                     # 26 0x1a
 
+		'TOK_ADDMEMBER',                                           # 27 0x1b
+		'TOK_DELMEMBER',
+
 		'???', # Fllling an hole
 
-		'TOK_ADDMEMBER',
-		'TOK_DELMEMBER',
 		'TOK_CHKMEMBER',                                           # 30 0x1e
 
 		'CTRL_STATEMENTBEGIN',
@@ -1064,7 +1075,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a, 0x1e, 0x42):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x42):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -1101,6 +1112,12 @@ class Instruction():
 			elif self.id == 0x1a:
 				info['op'] = '[]'
 				info['idx'] = self.offset
+				space = False
+			elif self.id == 0x1b:
+				info['op'] = '.+'
+				space = False
+			elif self.id == 0x1c:
+				info['op'] = '.-'
 				space = False
 
 			elif self.id == 0x1e:

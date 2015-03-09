@@ -216,7 +216,7 @@ class ECLFile:
 		blk = [] # Last block is the current block, also used as indentation level
 		idx = 0 # Index of next instruction to be read (PC, Program Counter)
 		glo = [] # Map of global var IDs => names
-		loc = [] # Map of local var IDs => names
+		#loc = [] # Map of local var IDs => names
 		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
 
 		# Utility functions
@@ -255,7 +255,7 @@ class ECLFile:
 			desc, info = inst.parse(self.const, self.usages)
 
 			# End if sections if needed
-			while blk and blk[-1]['type'] == 'if' and blk[-1]['end'] == idx:
+			while blk and blk[-1].type == 'if' and blk[-1].end == idx:
 				del blk[-1]
 				yield(ind('endif'))
 
@@ -279,26 +279,26 @@ class ECLFile:
 
 
 			if name == 'getarg':
-				if not len(blk) or blk[-1]['type'] != 'program':
+				if not len(blk) or blk[-1].type != 'program':
 					# Auto-starting program block
 					progParms = []
-					blk.append({'type': 'program'})
+					blk.append(Block('program', blk))
 				progParms.append(info['arg'])
-				loc.append(info['arg'])
+				blk[-1].vars.append(info['arg'])
 
 			elif name == 'poparg':
 				if funcParms is None:
 					funcParms = []
 					funcName = 'func{}'.format(idx)
-					blk.append({'type': 'function'})
+					blk.append(Block('function', blk))
 				funcParms.append(info['arg'])
-				loc.append(info['arg'])
+				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
 				parms = getParms(info['func'].parm)
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
-				call = '{}({})'.format(info['func'].name, ', '.join(parms))
+				call = '{}({})'.format(info['func'].name, ', '.join([str(p) for p in parms]))
 				reg.append(call)
 
 			elif name == 'method':
@@ -318,7 +318,7 @@ class ECLFile:
 				if info['var'] and info['scope'] == 'global':
 					v = glo[info['id']]
 				elif info['var'] and info['scope'] == 'local':
-					v = loc[info['id']]
+					v = blk[-1].vars[info['id']]
 				elif info['type'] == 'str':
 					v = quote(info['val'])
 				elif info['type'] in ('int','float'):
@@ -382,11 +382,11 @@ class ECLFile:
 
 			elif name == 'var':
 				if info['scope'] == 'global':
-					name = 'g' + str(len(glo)+1)
+					name = 'g' + str(info['id']+1) #str(len(glo)+1)
 					glo.append(name)
 				elif info['scope'] == 'local':
-					name = 'l' + str(len(loc)+1)
-					loc.append(name)
+					name = 'l'*len(blk) + str(info['id']+1) #str(len(loc)+1)
+					blk[-1].vars.append(name)
 				else:
 					self.log.error('0x%04X: unimplemented var', idx)
 				reg.append(name)
@@ -420,11 +420,14 @@ class ECLFile:
 						# No mathing jump found, this is a simple if block
 						typ = 'if'
 					yield(ind('{}( {}{} )'.format(typ, op, reg.pop())))
-					blk.append({'type': typ, 'else': elseInstr, 'end': end})
-				elif info['cond'] is None and blk and blk[-1]['type'] == 'if' and blk[-1]['else'] == idx:
+					b = Block(typ, blk)
+					b.els = elseInstr
+					b.end = end
+					blk.append(b)
+				elif info['cond'] is None and blk and blk[-1].type == 'if' and blk[-1].els == idx:
 					# This is the else jump of the current "if" statement
 					yield(ind('else',-1))
-				elif info['cond'] is None and blk and blk[-1]['type'] == 'while' and blk[-1]['end']-1 == idx:
+				elif info['cond'] is None and blk and blk[-1].type == 'while' and blk[-1].end-1 == idx:
 					# This is the end jump of the current "while" statement
 					yield(ind('endwhile',-1))
 					del blk[-1]
@@ -434,15 +437,16 @@ class ECLFile:
 			elif name == 'foreach':
 				if info['act'] == 'start':
 					what = reg.pop()
+					b = Block('foreach', blk)
 					it = Iterator(len(blk))
-					loc.append(it)
-					loc.append(what)
-					loc.append(str(it))
+					b.vars.append(it)
+					b.vars.append(what)
+					b.vars.append(str(it))
 					reg.append(it)
 					reg.append(what)
 					reg.append(str(it))
 					yield(ind('foreach {} in {}'.format(reg[-1], reg[-2])))
-					blk.append({'type': 'foreach'})
+					blk.append(b)
 				elif info['act'] == 'step':
 					# Just ignore it
 					pass
@@ -470,19 +474,19 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1]['type'] == 'while':
+				if len(blk) and blk[-1].type == 'while':
 					# While block is ended automatically
 					pass
 				elif len(blk):
-					yield(ind("end{}".format(blk[-1]['type']), -1))
-					if blk[-1]['type'] == 'program':
+					yield(ind("end{}".format(blk[-1].type), -1))
+					if blk[-1].type == 'program':
 						yield('')
 					del blk[-1]
 				else:
 					self.log.warning('No block to end')
 
 			elif name == 'return':
-				if not len(blk) or blk[-1]['type'] != 'function':
+				if not len(blk) or blk[-1].type != 'function':
 					self.log.critical('0x%04X: return outside function', idx)
 				yield('endfunction')
 				yield('')
@@ -587,6 +591,16 @@ class ECLFile:
 class W(collections.UserList):
 	''' Holder class for W registers '''
 	pass
+
+class Block():
+	''' This represents an indentation/scope block '''
+	def __init__(self, type, blocks):
+		self.type = type
+		if len(blocks):
+			# Copy vars from parent
+			self.vars = blocks[-1].vars[:]
+		else:
+			self.vars = []
 
 class Array(collections.UserList):
 	''' Utility class to represent an array '''

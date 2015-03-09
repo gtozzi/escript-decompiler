@@ -353,7 +353,14 @@ class ECLFile:
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] == '[]':
 					# Array subscription
-					res = '{}[{}]'.format(l, r)
+					if info['idx'] == 0:
+						res = '{}[{}]'.format(l, r)
+					elif info['idx'] > 0:
+						if not l.endswith(']'):
+							self.log.critical('0x%04X: multiple subscription on a non-array %s', idx, info)
+						res = '{},{}]'.format(l[:-1], r)
+					else:
+						self.log.error('0x%04X: unimplemented array subscription %s', idx, info)
 				else:
 					self.log.error('0x%04X: unimplemented assign %s', idx, info['op'])
 				reg.append(res)
@@ -981,6 +988,7 @@ class Instruction():
 
 			elif self.id == 0x1a:
 				info['op'] = '[]'
+				info['idx'] = self.offset
 				space = False
 
 			elif self.id == 0x1e:
@@ -1198,10 +1206,10 @@ if __name__ == '__main__':
 			print(l)
 	if args.source or args.optimized:
 		src = []
-		if args.source:
-			for l in ecl.source():
+		for l in ecl.source():
+			if args.source:
 				print(l)
-				src.append(l)
+			src.append(l)
 		if args.optimized:
 			for l in ecl.optimize(src):
 				print(l)

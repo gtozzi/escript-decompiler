@@ -295,6 +295,7 @@ class ECLFile:
 		progParms = None # Will contain parameters for program block until they are outputted
 		funcParms = None # Will contain parameters for user function block until outputted
 		funcName = None # Will contain function name until outputted
+		progStarted = False # Will be true when program block has been started
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -312,9 +313,17 @@ class ECLFile:
 				name = None
 
 			if progParms is not None and name != 'getarg':
-				# Outputs program directive
+				# Parameters are over: outputs program directive
 				yield('program decompiled(' + ', '.join(progParms) + ')')
 				progParms = None
+				progStarted = True
+
+			if self.program is not None and self.program.args == 0 and not progStarted and name == 'var' and info['scope'] == 'local':
+				# I know i have a program block, but no params will be passed
+				# so I need to do some guessing to figure out where it will start.
+				# Will start it before first local variable is declared
+				yield('program decompiled()')
+				blk.append(Block('program', blk))
 
 			if idx in fun:
 				# New function starts here
@@ -573,6 +582,17 @@ class ECLFile:
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
 			idx += 1
+
+		# Outputs program block if it still has not been started yet.
+		# Looks like it doesn't make any difference in the final binary compiled file
+		if not progStarted:
+			yield('')
+			yield('// Decompiler couldn\'t find program block start, so it\'s placing it here')
+			yield('// Looks like it doesn\'t make any difference in the compiled version anyway...')
+			yield('program decompiled()')
+			yield('endprogram')
+			yield('')
+			progStarted = True
 
 		# Outputs unused usages: since the compiler is purging unused functions but
 		# not unused usages (from the usages section), this is necessary to make

@@ -103,28 +103,28 @@ class ECLFile:
 				section = self.getNextSection()
 			except ParseError as e:
 				self.log.critical(e)
-				sys.exit(1)
+				raise e
 
 			if isinstance(section, UsageSection):
 				self.usages.append(section)
 			elif isinstance(section, InstructionsSection):
 				if self.instr is not None:
 					self.log.critical('Duplicate instructions section found')
-					sys.exit(1)
+					raise SectionsError('Duplicate instructions section found')
 				self.instr = section
 			elif isinstance(section, ConstantsSection):
 				if self.const is not None:
 					self.log.critical('Duplicate constants section found')
-					sys.exit(1)
+					raise SectionsError('Duplicate constants section found')
 				self.const = section
 			elif isinstance(section, ProgramSection):
 				if self.program is not None:
 					self.log.critical('Duplicate program section found')
-					sys.exit(1)
+					raise SectionsError('Duplicate program section found')
 				self.program = section
 			else:
 				self.log.critical('Unsupported section %s', section)
-				sys.exit(1)
+				raise SectionsError('Unsupported section %s' % section)
 
 			self.pos += 6 + section.size()
 			if self.pos == len(self.buf):
@@ -176,7 +176,7 @@ class ECLFile:
 		elif code == 4:
 			return ProgramSection(data)
 		else:
-			raise ParseError('Unsupported section code %d', code)
+			raise ParseError('Unsupported section code %d' % code)
 
 	def dump(self):
 		''' return useful informations as a dump
@@ -1211,9 +1211,11 @@ class ProgramSection(Section):
 			raise ParseError('Unexpected data in bytes 2-16 of section: %s', data[1:])
 
 
-class ParseError(RuntimeError):
+class ParseError(Exception):
 	pass
 
+class SectionsError(ParseError):
+	pass
 
 class LogFormatter(logging.Formatter):
 	''' Formats log into colored output for better readability '''

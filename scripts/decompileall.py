@@ -33,6 +33,7 @@ if __name__ == '__main__':
 	cmperr = 0
 	diff = 0
 	ok = 0
+	sizes = {}
 	for root, subdirs, files in os.walk(args.root):
 		for f in files:
 			if f.endswith('.ecl'):
@@ -40,6 +41,8 @@ if __name__ == '__main__':
 				binf = os.path.join(root,f)
 
 				print(binf)
+
+				sizes[binf] = os.stat(binf).st_size
 
 				try:
 					ecl = decompile.ECLFile(binf)
@@ -71,7 +74,12 @@ if __name__ == '__main__':
 					continue
 
 				ok += 1
+				del sizes[binf]
 
 	print('')
 	f = (bins, decerr,decerr/bins, cmperr,cmperr/bins, diff,diff/bins, ok,ok/bins)
 	print('Done. Found: {}, Decompile Errors: {} ({:.1%}), Compile Errors: {} ({:.1%}), Different: {} ({:.1%}), OK: {} ({:.1%})'.format(*f))
+	print('Smallest files with problems:')
+	siz = sorted(sizes, key=sizes.get)
+	for i in range(1,6):
+		print('{}. {}'.format(i, siz[i]))

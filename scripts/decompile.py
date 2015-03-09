@@ -664,6 +664,8 @@ class Block():
 			self.vars = blocks[-1].vars[:]
 		else:
 			self.vars = []
+	def __repr__(self):
+		return '<Block {}>'.format(self.type)
 
 class Array(collections.UserList):
 	''' Utility class to represent an array '''

@@ -6,6 +6,7 @@ Decompiles a whole POL project
 
 import os, sys
 import logging
+import collections
 import tempfile
 import subprocess
 import filecmp
@@ -33,7 +34,7 @@ if __name__ == '__main__':
 	start = datetime.datetime.now()
 
 	# First scan all binaries and get their size
-	sizes = {}
+	sizes = collections.OrderedDict()
 	for root, subdirs, files in os.walk(args.root):
 		for f in files:
 			if f.endswith('.ecl'):

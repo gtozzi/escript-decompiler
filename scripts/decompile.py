@@ -231,10 +231,13 @@ class ECLFile:
 			'!=': 40,
 			'&&': 30,
 			'||': 30,
+			'&':  26,
+			'^':  24,
+			'|':  22,
 			'*':  20,
 			'/':  20,
 			'-':  10,
-			'+': 10,
+			'+':  10,
 		}
 		def ind(row, mod=0):
 			''' adds indentation to a row '''
@@ -418,6 +421,10 @@ class ECLFile:
 					# Concatenation / Addition
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
+				elif info['op'] in ('&', '|', '^'):
+					# Bitwise: and, or, xor
+					l, r = enclose(l, info['op'], r)
+					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] in ('&&', '||'):
 					# Logical: and, or
 					l, r = enclose(l, info['op'], r)
@@ -467,6 +474,13 @@ class ECLFile:
 				yield(ind('{};'.format(r)))
 
 			elif name == 'var':
+				# checks if next instrction inits variable as array
+				nd, ni = self.instr[idx+1].parse(self.const, self.usages)
+				if ni['name'] == 'vararr':
+					array = True
+				else:
+					array = False
+
 				if info['scope'] == 'global':
 					name = 'g' + str(info['id']+1) #str(len(glo)+1)
 					glo.append(name)
@@ -476,7 +490,11 @@ class ECLFile:
 				else:
 					self.log.error('0x%04X: unimplemented var', idx)
 				reg.append(name)
-				yield(ind('var {};'.format(name)))
+				yield(ind('var {}{};'.format(name, ' array' if array else '')))
+
+			elif name == 'vararr':
+				# Ignore it now because it has already been processed by var
+				pass
 
 			elif name == 'goto':
 				# A goto may be part of an if block or of a loop (for/while)
@@ -926,7 +944,7 @@ class Instruction():
 
 		'RSV_FUNCTION',
 
-		'INS_DECLARE_ARRAY',
+		'INS_DECLARE_ARRAY',                                       # 46 0x2e
 
 		'TOK_FUNC',                                                # 47 0x2f
 		'TOK_USERFUNC',
@@ -954,11 +972,11 @@ class Instruction():
 		'INS_POP_PARAM_BYREF',                                     # 66 0x42
 		'TOK_MODULUS',
 
-		'TOK_BSLEFT',
-		'TOK_BSRIGHT',
+		#'TOK_BSLEFT',
+		#'TOK_BSRIGHT',
 		'TOK_BITAND',
 		'TOK_BITOR',
-		'TOK_BITXOR',
+		'TOK_BITXOR',                                              # 70 0x46
 
 		'TOK_STRUCT',
 		'INS_SUBSCRIPT_ASSIGN',
@@ -1079,7 +1097,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x42):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x42, 0x44,0x45,0x46):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -1131,6 +1149,13 @@ class Instruction():
 			elif self.id == 0x42:
 				info['op'] = ':=&'
 
+			elif self.id == 0x44:
+				info['op'] = '&'
+			elif self.id == 0x45:
+				info['op'] = '|'
+			elif self.id == 0x46:
+				info['op'] = '^'
+
 			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
 
 		elif self.id in (0x17,):
@@ -1152,6 +1177,10 @@ class Instruction():
 			info['scope'] = scope
 			info['id'] = self.offset
 			desc = '{name} {scope} #{id}'.format(**info)
+
+		elif self.id == 0x2e:
+			info['name'] = 'vararr'
+			desc = 'init var as array'
 
 		elif self.id in (0x25, 0x26, 0x27):
 			info['name'] = 'goto'

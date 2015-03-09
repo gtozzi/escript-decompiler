@@ -708,6 +708,14 @@ class ECLFile:
 					ret[i] = assign.group('ind') + 'var ' + src[i].strip()
 					ret[i-1] = None
 
+		# Remove emptied lines
+		ret = [ i for i in ret if i is not None ]
+
+		i = -1
+		src = ret[:]
+		for line in src:
+			i += 1
+
 			# Convert while into for loops
 			whil = whileRe.match(line)
 			if whil:
@@ -726,6 +734,14 @@ class ECLFile:
 						ret[i-1] = None
 						ret[end-1] = None
 						ret[end] = ew.group('ind') + 'endfor'
+
+		# Remove emptied lines
+		ret = [ i for i in ret if i is not None ]
+
+		i = -1
+		src = ret[:]
+		for line in src:
+			i += 1
 
 			# Remove lines with variable names only
 			var = varRe.match(line)

@@ -247,6 +247,8 @@ class ECLFile:
 
 		# Parse the instructions
 		progParms = None # Will contain parameters for program block until they are outputted
+		funcParms = None # Will contain parameters for user function block until outputted
+		funcName = None # Will contain function name until outputted
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -268,12 +270,28 @@ class ECLFile:
 				yield('program decompiled(' + ', '.join(progParms) + ')')
 				progParms = None
 
+			if funcParms is not None and name != 'poparg':
+				# Outputs user function directive
+				yield('function {}('.format(funcName) + ', '.join(funcParms) + ')')
+				loc = funcParms[:]
+				funcParms = None
+				funcName = None
+
+
 			if name == 'getarg':
 				if not len(blk) or blk[-1]['type'] != 'program':
 					# Auto-starting program block
 					progParms = []
 					blk.append({'type': 'program'})
 				progParms.append(info['arg'])
+				loc.append(info['arg'])
+
+			elif name == 'poparg':
+				if funcParms is None:
+					funcParms = []
+					funcName = 'func{}'.format(idx)
+					blk.append({'type': 'function'})
+				funcParms.append(info['arg'])
 				loc.append(info['arg'])
 
 			elif name == 'run':
@@ -288,6 +306,14 @@ class ECLFile:
 				r = reg.pop()
 				reg.append('{}.{}({})'.format(r, info['method'], ', '.join(parms)))
 
+			elif name == 'makelocal':
+				# "Prepare" local parameters for function call, try to just ignore it
+				pass
+
+			elif name == 'function':
+				#FIXME: compute real parms
+				reg.append('func{}({})'.format(info['to'], ', '.join([reg[-1]])))
+
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':
 					v = glo[info['id']]
@@ -298,7 +324,7 @@ class ECLFile:
 				elif info['type'] in ('int','float'):
 					v = str(info['val'])
 				else:
-					self.log.error('unimplemented load')
+					self.log.error('0x%04X: unimplemented load', idx)
 				reg.append(v)
 
 			elif name == 'assign':
@@ -329,7 +355,7 @@ class ECLFile:
 					# Array subscription
 					res = '{}[{}]'.format(l, r)
 				else:
-					self.log.error('unimplemented assign {op}'.format(**info))
+					self.log.error('0x%04X: unimplemented assign %s', idx, info['op'])
 				reg.append(res)
 
 			elif name == 'unary':
@@ -338,7 +364,7 @@ class ECLFile:
 					# Logical not
 					res = '{} {}'.format(info['op'], r)
 				else:
-					self.log.error('unimplemented unary {op}'.format(**info))
+					self.log.error('0x%04X: unimplemented unary %s', idx, info['op'])
 				reg.append(res)
 
 			elif name == 'array':
@@ -348,7 +374,7 @@ class ECLFile:
 					val = reg.pop()
 					reg[-1].append(val)
 				else:
-					self.log.error('unimplemented array {act}'.format(**info))
+					self.log.error('0x%04X: unimplemented array %s', idx, info['act'])
 
 			elif name == 'consume':
 				r = reg.pop()
@@ -362,7 +388,7 @@ class ECLFile:
 					name = 'l' + str(len(loc)+1)
 					loc.append(name)
 				else:
-					self.log.error('unimplemented var')
+					self.log.error('0x%04X: unimplemented var', idx)
 				reg.append(name)
 				yield(ind('var {};'.format(name)))
 
@@ -403,7 +429,7 @@ class ECLFile:
 					yield(ind('endwhile',-1))
 					del blk[-1]
 				else:
-					self.log.error('unimplemented goto')
+					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk)
 
 			elif name == 'foreach':
 				if info['act'] == 'start':
@@ -421,12 +447,17 @@ class ECLFile:
 					# Just ignore it
 					pass
 				else:
-					self.log.error('unimplemented foreach')
+					self.log.error('0x%04X: unimplemented foreach', idx)
 
 			elif name == 'progend':
-				if idx == len(self.instr)-1:
+				try:
+					nd, ni = self.instr[idx+1].parse(self.const, self.usages)
+				except KeyError:
+					nd, ni = (None, None)
+
+				if ni is None or ni['name'] == 'poparg':
 					# This is the final instruction, just ignore it
-					pass
+					yield('')
 				else:
 					# This is a return out of the program block
 					yield(ind('return;'))
@@ -437,18 +468,30 @@ class ECLFile:
 					try:
 						del reg[i]
 					except IndexError:
-						self.log.warning('Unable to consume index {}'.format(i))
-				if len(blk):
+						self.log.warning('0x%04X: unable to consume index %s', idx, i)
+
+				if len(blk) and blk[-1]['type'] == 'while':
+					# While block is ended automatically
+					pass
+				elif len(blk):
 					yield(ind("end{}".format(blk[-1]['type']), -1))
+					if blk[-1]['type'] == 'program':
+						yield('')
 					del blk[-1]
 				else:
 					self.log.warning('No block to end')
 
+			elif name == 'return':
+				if not len(blk) or blk[-1]['type'] != 'function':
+					self.log.critical('0x%04X: return outside function', idx)
+				yield('endfunction')
+				yield('')
+
 			elif name is None:
-				self.log.error('unknown instruction {}'.format(inst))
+				self.log.error('0x%04X: unknown instruction %s', idx, inst)
 
 			else:
-				self.log.error('unimplemented instruction {}'.format(inst))
+				self.log.error('0x%04X: unimplemented instruction %s', idx, inst)
 
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
@@ -459,10 +502,14 @@ class ECLFile:
 		src = list(source)
 		ret = src[:]
 
+		varRe = re.compile('^(?P<ind>\s*)[lg][0-9]+;$')
 		valRe = re.compile('^(?P<ind>\s*)var (?P<var>[a-z0-9]+);$')
-		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := .+;$')
-		whileRe = re.compile('^(?P<ind>\s*)while\( (?P<var>[a-z0-9]+) (?P<cond>.*)\)$')
+		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := .+$', re.M)
+		whileRe = re.compile('^(?P<ind>\s*)while\( (?P<var>[a-z0-9]+) (?P<cond>.*) \)$')
 		endwhileRe = re.compile('^(?P<ind>\s*)endwhile$')
+		elseRe = re.compile('^(?P<ind>\s*)else$')
+		ifRe = re.compile('^(?P<ind>\s*)if\( (?P<cond>.*) \)$')
+		endifRe = re.compile('^(?P<ind>\s*)endif$')
 
 		i = -1
 		for line in src:
@@ -473,7 +520,7 @@ class ECLFile:
 			if assign:
 				val = valRe.match(src[i-1])
 				if val and assign.group('var') == val.group('var'):
-					ret[i] = assign.group('ind') + 'var ' + src[i]
+					ret[i] = assign.group('ind') + 'var ' + src[i].strip()
 					ret[i-1] = None
 
 			# Convert while into for loops
@@ -495,7 +542,47 @@ class ECLFile:
 						ret[end-1] = None
 						ret[end] = ew.group('ind') + 'endfor'
 
-		return [ i for i in ret if i is not None ]
+			# Remove lines with variable names only
+			var = varRe.match(line)
+			if var:
+				ret[i] = None
+
+		# Remove emptied lines
+		ret = [ i for i in ret if i is not None ]
+
+		def ifElseToElseIf(ret):
+			i = 0
+			found = 0
+			while i < len(ret):
+				# Convert nested if/else blocks in elseif blocks
+				els = elseRe.match(ret[i])
+				if els:
+					ifr = ifRe.match(ret[i+1])
+					if ifr:
+						found += 1
+						ret[i] = ret[i] + ret[i+1].strip()
+						ret[i+1] = None
+						i += 1
+						while True:
+							i += 1
+							er = endifRe.match(ret[i])
+							ret[i] = ret[i][1:]
+							if er and er.group('ind') == ifr.group('ind'):
+								ret[i] = None
+								break
+				i += 1
+
+			# Remove emptied lines
+			ret = [ i for i in ret if i is not None ]
+
+			if found:
+				ret = ifElseToElseIf(ret)
+
+			return ret
+
+		ret = ifElseToElseIf(ret)
+
+		return ret
 
 class W(collections.UserList):
 	''' Holder class for W registers '''
@@ -688,7 +775,7 @@ class Instruction():
 		'RSV_JMPIFTRUE',
 
 		'RSV_GOTO',
-		'RSV_RETURN',
+		'RSV_RETURN',                                              # 28 0x40
 		'RSV_EXIT',
 
 		'RSV_LOCAL',
@@ -794,8 +881,22 @@ class Instruction():
 		elif self.id == 0x3b:
 			info['name'] = 'method'
 			info['method'] = const.getStr(self.offset)
-			info['parm'] = int(self.type)
+			info['parm'] = self.type
 			desc = 'L := R.{method}()'.format(**info)
+
+		elif self.id == 0x21:
+			info['name'] = 'makelocal'
+			desc = '{name}'.format(**info)
+
+		elif self.id == 0x22:
+			info['name'] = 'function'
+			info['to'] = self.offset
+			desc = 'call function at 0x{to:04X}'.format(**info)
+
+		elif self.id == 0x23:
+			info['name'] = 'poparg'
+			info['arg'] = const.getStr(self.offset)
+			desc = '{name} {arg}'.format(**info)
 
 		elif self.id in (0x00,0x01,0x02, 0x33,0x34):
 			info['name'] = 'load'
@@ -912,6 +1013,10 @@ class Instruction():
 			else:
 				cond = ' if R == {} (consume R)'.format(info['cond'])
 			desc = '{name} 0x{to:04X}{cond}'.format(cond=cond, name=info['name'], to=info['to'])
+
+		elif self.id == 0x28:
+			info['name'] = 'return'
+			desc = 'return from user func'
 
 		elif self.id in (0x35, 0x36):
 			info['name'] = 'foreach'
@@ -1062,6 +1167,7 @@ if __name__ == '__main__':
 	parser.add_argument('ecl_file', help='The compiled script')
 	parser.add_argument('-d', '--dump', action='store_true', help='Dump disassembled program')
 	parser.add_argument('-s', '--source', action='store_true', help='Dump disassembled source')
+	parser.add_argument('-o', '--optimized', action='store_true', help='Dump optimized source')
 	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
 	args = parser.parse_args()
 
@@ -1076,6 +1182,12 @@ if __name__ == '__main__':
 	if args.dump:
 		for l in ecl.dump():
 			print(l)
-	if args.source:
-		for l in ecl.optimize(ecl.source()):
-			print(l)
+	if args.source or args.optimized:
+		src = []
+		if args.source:
+			for l in ecl.source():
+				print(l)
+				src.append(l)
+		if args.optimized:
+			for l in ecl.optimize(src):
+				print(l)

@@ -5,6 +5,7 @@ EScript decompiler for binary ECL files version 2 (POL093)
 '''
 
 import os, sys
+import struct
 import logging
 import string
 import collections
@@ -18,20 +19,13 @@ def parseInt(val):
 	'''
 	if len(val) < 1:
 		raise ValueError("Can't parse an empty string")
-	ret = 0
-	pos = 0
-	for char in val:
-		i = int(char)
-		if pos + 1 == len(val):
-			# This is the most significant bit, check for the sign
-			if i & 0b10000000:
-				mul = -1
-				i &= 0b10000000
-			else:
-				mul = 1
-		ret += i * 0x100 ** pos
-		pos += 1
-	return ret * mul
+	if len(val) > 4:
+		raise ValueError("Too many bytes for an int")
+
+	while len(val) < 4:
+		val += b'\x00'
+	ret = struct.unpack('i',val)
+	return ret[0]
 
 def parseFloat(val):
 	''' Parses a float in binary format '''
@@ -230,7 +224,7 @@ class ECLFile:
 		ops = {
 			':=': 50,
 			'=':  40,
-			'=>': 40,
+			'>=': 40,
 			'>':  40,
 			'<=': 40,
 			'<':  40,
@@ -263,6 +257,8 @@ class ECLFile:
 		def enclose(left, op, right):
 			''' add parenthesys if needed '''
 			exRe = re.compile('\(.*\)')
+			left = str(left)
+			right = str(right)
 
 			# Calculate left, right, and operator power
 			opow = ops[op]
@@ -370,7 +366,7 @@ class ECLFile:
 			elif name == 'method':
 				parms = getParms(info['parm'])
 				r = reg.pop()
-				reg.append('{}.{}({})'.format(r, info['method'], ', '.join(parms)))
+				reg.append('{}.{}({})'.format(r, info['method'], ', '.join([str(p) for p in parms])))
 
 			elif name == 'makelocal':
 				# "Prepare" parameters for next function call
@@ -391,6 +387,8 @@ class ECLFile:
 					v = quote(info['val'])
 				elif info['type'] in ('int','float'):
 					v = str(info['val'])
+				elif info['type'] == 'error':
+					v = 'error'
 				else:
 					self.log.error('0x%04X: unimplemented load', idx)
 				reg.append(v)
@@ -932,7 +930,7 @@ class Instruction():
 
 		'TOK_FUNC',                                                # 47 0x2f
 		'TOK_USERFUNC',
-		'TOK_ERROR',
+		'TOK_ERROR',                                               # 49 0x31
 		'TOK_IN',
 		'TOK_LOCALVAR',
 		'TOK_GLOBALVAR',
@@ -1042,7 +1040,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x00,0x01,0x02, 0x33,0x34):
+		elif self.id in (0x00,0x01,0x02, 0x31, 0x33,0x34):
 			info['name'] = 'load'
 			if self.id == 0x00:
 				info['var'] = False
@@ -1056,6 +1054,9 @@ class Instruction():
 				info['var'] = False
 				info['type'] = 'str'
 				info['val'] = const.getStr(self.offset)
+			elif self.id == 0x31:
+				info['var'] = False
+				info['type'] = 'error'
 			elif self.id == 0x33:
 				info['var'] = True
 				info['scope'] = 'local'
@@ -1068,7 +1069,10 @@ class Instruction():
 			if info['var']:
 				desc = 'load {scope} var #{id}'.format(**info)
 			else:
-				desc = 'load const {type} <{val}>'.format(**info)
+				if info['type'] == 'error':
+					desc = 'load const error'
+				else:
+					desc = 'load const {type} <{val}>'.format(**info)
 
 		elif self.id == 0x38:
 			info['name'] = 'getarg'

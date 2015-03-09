@@ -25,6 +25,7 @@ if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('root', type=check_folder, help='The POL\'s root folder')
 	parser.add_argument('-a', '--halt', action='store_true', help='Halt on error')
+	parser.add_argument('-s', '--skip', type=int, default=0, help='Skip first number of files')
 	args = parser.parse_args()
 
 	logging.basicConfig(level=logging.WARNING)
@@ -41,8 +42,13 @@ if __name__ == '__main__':
 
 	# Then proceed by size, from smaller to bigger (useful for debugging with -a flag)
 	status = {}
+	i = 0
 	for binf in sorted(sizes, key=sizes.get):
-		print(binf)
+		i += 1
+		print('{}/{}: {}'.format(i, len(sizes), binf))
+		if i <= args.skip:
+			print('skipping...')
+			continue
 
 		try:
 			ecl = decompile.ECLFile(binf)

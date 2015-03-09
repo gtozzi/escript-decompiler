@@ -9,6 +9,7 @@ import logging
 import tempfile
 import subprocess
 import filecmp
+import datetime
 
 import decompile
 
@@ -28,12 +29,10 @@ if __name__ == '__main__':
 
 	logging.basicConfig(level=logging.WARNING)
 
+	start = datetime.datetime.now()
 	bins = 0
-	decerr = 0
-	cmperr = 0
-	diff = 0
-	ok = 0
-	sizes = {}
+	sizes = {} # Sizes of files with problems
+	status = {} # Results
 	for root, subdirs, files in os.walk(args.root):
 		for f in files:
 			if f.endswith('.ecl'):
@@ -48,7 +47,7 @@ if __name__ == '__main__':
 					ecl = decompile.ECLFile(binf)
 					src = ecl.optimize(list(ecl.source()))
 				except Exception as e:
-					decerr += 1
+					status[binf] = 'decerr'
 					print('ERROR: {}'.format(e))
 					if args.halt:
 						raise e
@@ -65,21 +64,27 @@ if __name__ == '__main__':
 				ret = subprocess.call(cmd, shell=True)
 				os.unlink(out.name)
 				if ret:
-					cmperr += 1
+					status[binf] = 'cmperr'
 					continue
 
 				cmpf = out.name[:-4] + '.ecl'
-				if filecmp.cmp(binf, cmpf):
-					diff += 1
+				if not filecmp.cmp(binf, cmpf):
+					status[binf] = 'diff'
 					continue
 
-				ok += 1
+				status[binf] = 'ok'
 				del sizes[binf]
 
 	print('')
+	s = list(status.values())
+	decerr = s.count('decerr')
+	cmperr = s.count('cmperr')
+	diff = s.count('diff')
+	ok = s.count('ok')
 	f = (bins, decerr,decerr/bins, cmperr,cmperr/bins, diff,diff/bins, ok,ok/bins)
-	print('Done. Found: {}, Decompile Errors: {} ({:.1%}), Compile Errors: {} ({:.1%}), Different: {} ({:.1%}), OK: {} ({:.1%})'.format(*f))
+	print('Done. Took: {}'.format(datetime.datetime.now()-start))
+	print('Found: {}, Decompile Errors: {} ({:.1%}), Compile Errors: {} ({:.1%}), Different: {} ({:.1%}), OK: {} ({:.1%})'.format(*f))
 	print('Smallest files with problems:')
 	siz = sorted(sizes, key=sizes.get)
 	for i in range(1,6):
-		print('{}. {}'.format(i, siz[i]))
+		print('{}. {}: {}'.format(i, siz[i], status[siz[i]].upper()))

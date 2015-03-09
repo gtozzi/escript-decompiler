@@ -514,7 +514,7 @@ class ECLFile:
 			elif name == 'progend':
 				try:
 					nd, ni = self.instr[idx+1].parse(self.const, self.usages)
-				except KeyError:
+				except IndexError:
 					nd, ni = (None, None)
 
 				if ni is None or ni['name'] == 'poparg':

@@ -79,6 +79,8 @@ class ECLFile:
 		self.const = None
 		# Will contain the program section definition
 		self.program = None
+		# Will contain the exported functions definition
+		self.exports = None
 
 		with open(inFile, 'rb') as f:
 			while True:
@@ -122,6 +124,11 @@ class ECLFile:
 					self.log.critical('Duplicate program section found')
 					raise SectionsError('Duplicate program section found')
 				self.program = section
+			elif isinstance(section, ExportsSection):
+				if self.exports is not None:
+					self.log.critical('Duplicate exports section found')
+					raise SectionsError('Duplicate exports section found')
+				self.exports = section
 			else:
 				self.log.critical('Unsupported section %s', section)
 				raise SectionsError('Unsupported section %s' % section)
@@ -172,6 +179,8 @@ class ECLFile:
 			return ConstantsSection(data)
 		elif code == 4:
 			return ProgramSection(data)
+		elif code == 6:
+			return ExportsSection(data)
 		else:
 			raise ParseError('Unsupported section code %d' % code)
 
@@ -205,13 +214,29 @@ class ECLFile:
 		yield(str(self.const))
 		yield('')
 
+		if self.exports:
+			yield('*** EXPORTED FUNCTIONS ***')
+			for k, f in self.exports.func.items():
+				yield(str(f))
+			yield('')
+
 	def source(self):
 		''' Try to build back the source code for the script
 		@return list of lines
 		'''
 
+		# Analyze exported functions
+		fun = {} # {start idx: {'name', 'args', 'export'}}
+		if self.exports is not None:
+			for idx, f in self.exports.func.items():
+				inst = self.instr[idx+1]
+				desc, info = inst.parse(self.const, self.usages)
+				if info['name'] != 'function':
+					self.log.critical('0x%04X: No function call for exported function found', idx+1)
+				fun[info['to']] = {'name': f.name, 'args': f.args, 'export': True}
+
+
 		# Preparatory step
-		fun = {} # {start idx: number of parameters}
 		used = {} # List of used usages, to workaround a compiler bug (see below)
 
 		idx = 0
@@ -228,7 +253,7 @@ class ECLFile:
 			if name == 'function':
 				if info['to'] not in fun.keys():
 					# Found a new function, scan it
-					fun[info['to']] = 0
+					fun[info['to']] = {'name': 'func'+str(info['to']), 'args': 0, 'export': False}
 					idf = info['to']
 					while idf < len(self.instr):
 						ins = self.instr[idf]
@@ -241,7 +266,7 @@ class ECLFile:
 						if nam == 'return':
 							break
 						elif nam == 'poparg':
-							fun[info['to']] += 1
+							fun[info['to']]['args'] += 1
 
 						idf += 1
 
@@ -369,8 +394,7 @@ class ECLFile:
 
 		# Parse the instructions
 		progParms = None # Will contain parameters for program block until they are outputted
-		funcParms = None # Will contain parameters for user function block until outputted
-		funcName = None # Will contain function name until outputted
+		curFunc = None # Will contain parameters for user function block until outputted
 		progStarted = False # Will be true when program block has been started
 
 		while idx < len(self.instr):
@@ -415,16 +439,16 @@ class ECLFile:
 					del blk[-1]
 					yield(ind('endfunction'))
 					yield('')
-				funcParms = []
-				funcName = 'func{}'.format(idx)
+				curFunc = fun[idx]
+				curFunc['parms'] = []
 				blk.append(Block('function', None, idx))
 
-			if funcParms is not None and name != 'poparg':
+			if curFunc is not None and name != 'poparg':
 				# Outputs user function directive
-				p = reversed([ ('byref ' if i['byref'] else '') + i['arg'] for i in funcParms ])
-				yield('function {}('.format(funcName) + ', '.join(p) + ')')
-				funcParms = None
-				funcName = None
+				p = reversed([ ('byref ' if i['byref'] else '') + i['arg'] for i in curFunc['parms'] ])
+				e = 'exported ' if curFunc['export'] else ''
+				yield('{}function {}('.format(e, curFunc['name']) + ', '.join(p) + ')')
+				curFunc = None
 
 			if blk and blk[-1].type == 'case':
 				# Output case statement if needed
@@ -446,7 +470,7 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'poparg':
-				funcParms.append(info)
+				curFunc['parms'].append(info)
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
@@ -467,11 +491,11 @@ class ECLFile:
 				pass
 
 			elif name == 'function':
-				if fun[info['to']]:
-					parms = reg[0 - fun[info['to']]:]
+				if fun[info['to']]['args']:
+					parms = reg[0 - fun[info['to']]['args']:]
 				else:
 					parms = []
-				reg.append('func{}({})'.format(info['to'], ', '.join(parms)))
+				reg.append('{}({})'.format(fun[info['to']]['name'], ', '.join(parms)))
 
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':
@@ -1517,6 +1541,32 @@ class ProgramSection(Section):
 		self.args = int(self.data[0])
 		if data[1:] != b'\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00':
 			raise ParseError('Unexpected data in bytes 2-16 of section: %s', data[1:])
+
+
+class ExportsSection(Section):
+	''' A section type 06: exported functions '''
+
+	def __init__(self, data):
+		super().__init__(1, data)
+		self.func = collections.OrderedDict()
+		for i in range(0, len(data), 41):
+			f = ExportedFunction(data[i:i+41])
+			self.func[f.start] = f
+		self.log.debug('New exported functions section, functions: %s', self.func)
+
+	def __str__(self):
+		return str(self.func)
+
+class ExportedFunction():
+	''' A function inside an exported function section '''
+
+	def __init__(self, data):
+		self.name = parseStr(data[:33], True)
+		self.args = parseInt(data[33:37])
+		self.start = parseInt(data[37:])
+
+	def __repr__(self):
+		return '0x{:04X}: {}({}p)'.format(self.start, self.name, self.args)
 
 
 class ParseError(Exception):

@@ -660,6 +660,22 @@ class ECLFile:
 				else:
 					self.log.error('0x%04X: unimplemented foreach', idx)
 
+			elif name == 'for':
+				if info['act'] == 'start':
+					l = reg[-2]
+					r = reg[-1]
+					b = Block('for', blk, idx)
+					it = Iterator(len(blk))
+					b.vars.append(it)
+					reg.append(it)
+					yield(ind('for {} := {} to {}'.format(it, l, r)))
+					blk.append(b)
+				elif info['act'] == 'step':
+					# Just ignore it
+					pass
+				else:
+					self.log.error('0x%04X: unimplemented foreach', idx)
+
 			elif name == 'progend':
 				if idx == len(self.instr) - 1 or idx + 1 in fun.keys():
 					# This is the final instruction, just ignore it
@@ -1071,12 +1087,13 @@ class Instruction():
 
 		'INS_CALL_METHOD',                                         # 59 0x3b
 
-		'???', # Fllling an hole
-
 		'TOK_DICTIONARY',
 		'TOK_STACK',
-		'INS_INITFOR',
-		'INS_NEXTFOR',
+		'INS_INITFOR',                                             # 62 0x3e
+		'INS_NEXTFOR',                                             # 63 0x3f
+
+		'???', # Fllling an hole
+
 		'TOK_REFTO',
 		'INS_POP_PARAM_BYREF',                                     # 66 0x42
 		'TOK_MODULUS',
@@ -1319,6 +1336,14 @@ class Instruction():
 			if self.id == 0x35:
 				info['act'] = 'start'
 			elif self.id == 0x36:
+				info['act'] = 'step'
+			desc = '{act} {name}'.format(**info)
+
+		elif self.id in (0x3e, 0x3f):
+			info['name'] = 'for'
+			if self.id == 0x3e:
+				info['act'] = 'start'
+			elif self.id == 0x3f:
 				info['act'] = 'step'
 			desc = '{act} {name}'.format(**info)
 

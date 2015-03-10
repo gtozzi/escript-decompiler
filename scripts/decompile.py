@@ -507,6 +507,9 @@ class ECLFile:
 				else:
 					self.log.error('0x%04X: unimplemented array %s', idx, info['act'])
 
+			elif name == 'struct':
+				reg.append(Struct())
+
 			elif name == 'consume':
 				r = reg.pop()
 				yield(ind('{};'.format(r)))
@@ -514,9 +517,13 @@ class ECLFile:
 			elif name == 'var':
 				# checks if next instrction inits variable as array
 				nd, ni = self.instr[idx+1].parse(self.const, self.usages)
-				if ni['name'] == 'vararr':
-					array = True
-				else:
+				try:
+					if ni['name'] == 'vararr':
+						array = True
+					else:
+						array = False
+				except KeyError:
+					# Next instruction is unknown
 					array = False
 
 				if info['scope'] == 'global':
@@ -720,7 +727,8 @@ class ECLFile:
 			whil = whileRe.match(line)
 			if whil:
 				assign = assignRe.match(src[i-1])
-				if assign:
+				var = varRe.match(src[i-1])
+				if assign or var:
 					k = i
 					while True:
 						k += 1
@@ -804,11 +812,22 @@ class Block():
 class Array(collections.UserList):
 	''' Utility class to represent an array '''
 	def __str__(self, ind=0):
-		ret = '{' + os.linesep
+		ret = '{'
+		if len(self):
+			ret += os.linesep
 		for v in self:
 			ret += '\t'*(ind+1) + v + ',' + os.linesep
-		ret += '\t'*ind + '}'
+		if len(self):
+			ret += '\t'*ind
+		ret += '}'
 		return ret
+
+class Struct(Array):
+	''' Utility class to represent a structure (associative array)
+	Derived from array because it will always be empty (no append token)
+	and and empty structure is represented just like an ampty array
+	'''
+	pass
 
 class Iterator():
 	''' This represents an iterator '''
@@ -1032,7 +1051,7 @@ class Instruction():
 		'TOK_BITOR',
 		'TOK_BITXOR',                                              # 70 0x46
 
-		'TOK_STRUCT',
+		'TOK_STRUCT',                                              # 71 0x47
 		'INS_SUBSCRIPT_ASSIGN',
 		'INS_SUBSCRIPT_ASSIGN_CONSUME',
 		'INS_MULTISUBSCRIPT',
@@ -1281,6 +1300,10 @@ class Instruction():
 				info['act'] = 'start'
 			desc = '{name} {act}'.format(**info)
 
+		elif self.id == 0x47:
+			info['name'] = 'struct'
+			desc = 'struct start'
+
 		else:
 			desc = ''
 
@@ -1351,7 +1374,7 @@ class ConstantsSection(Section):
 				char = '.'
 			row += char
 			if not i % 16:
-				ret += '  ' + row + '\n'
+				ret += '  ' + row + os.linesep
 				row = ''
 			elif not i % 4:
 				ret += '  '

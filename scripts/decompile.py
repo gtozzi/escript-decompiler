@@ -424,8 +424,9 @@ class ECLFile:
 
 			if blk and blk[-1].type == 'case':
 				# Output case statement if needed
-				if idx in blk[-1].cases.keys():
-					yield(ind('{}:'.format(blk[-1].cases[idx]) if blk[-1].cases[idx] else 'default:',-1))
+				for v, i in blk[-1].cases.items():
+					if i == idx:
+						yield(ind('{}:'.format(v) if v is not None else 'default:',-1))
 				# Output endcase when end reached
 				if blk[-1].end is not None and blk[-1].end == idx:
 					del blk[-1]
@@ -637,7 +638,7 @@ class ECLFile:
 					# This is the end jump of the current "while" statement
 					yield(ind('endwhile',-1))
 					del blk[-1]
-				elif info['cond'] is None and blk and blk[-1].type == 'case' and idx+1 in blk[-1].cases.keys():
+				elif info['cond'] is None and blk and blk[-1].type == 'case' and idx+1 in blk[-1].cases.values():
 					# Jumps out of the case block, every goto should have the same "to"
 					if blk[-1].end is None:
 						blk[-1].end = info['to']
@@ -1368,17 +1369,19 @@ class Instruction():
 
 		elif self.id == 0x37:
 			info['name'] = 'case'
-			info['cases'] = {}
+			info['cases'] = collections.OrderedDict()
 			i = self.offset
 			while True:
-				info['cases'][const.getShort(i)] = const.getInt(i+3) # { idx: val }
+				idx = const.getShort(i)
 				n = const.getByte(i+2)
 				if n == 0xfe:
-					# This is the last case
+					# This is the last case (default)
+					info['cases'][None] = idx
 					break
 				elif n == 0xff:
-					# More cases to be read
-					pass
+					# This is a standard case, more cases to be read
+					val = const.getInt(i + 3)
+					info['cases'][val] = idx
 				else:
 					raise ValueError('Unexpected case byte {:02X}'.format(n))
 				i += 7

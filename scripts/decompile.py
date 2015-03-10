@@ -899,7 +899,7 @@ class Array(collections.UserList):
 		if len(self):
 			ret += os.linesep
 		for v in self:
-			ret += '\t'*(ind+1) + v + ',' + os.linesep
+			ret += '\t'*(ind+1) + str(v) + ',' + os.linesep
 		if len(self):
 			ret += '\t'*ind
 		ret += '}'

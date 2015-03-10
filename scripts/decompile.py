@@ -421,7 +421,8 @@ class ECLFile:
 
 			if funcParms is not None and name != 'poparg':
 				# Outputs user function directive
-				yield('function {}('.format(funcName) + ', '.join(reversed(funcParms)) + ')')
+				p = reversed([ ('byref ' if i['byref'] else '') + i['arg'] for i in funcParms ])
+				yield('function {}('.format(funcName) + ', '.join(p) + ')')
 				funcParms = None
 				funcName = None
 
@@ -445,7 +446,7 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'poparg':
-				funcParms.append(info['arg'])
+				funcParms.append(info)
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
@@ -1117,7 +1118,7 @@ class Instruction():
 
 		'???', # Fllling an hole
 
-		'TOK_REFTO',
+		'TOK_REFTO',                                               # 65 0x41
 		'INS_POP_PARAM_BYREF',                                     # 66 0x42
 		'TOK_MODULUS',
 
@@ -1202,10 +1203,11 @@ class Instruction():
 			info['to'] = self.offset
 			desc = 'call function at 0x{to:04X}'.format(**info)
 
-		elif self.id == 0x23:
+		elif self.id in (0x23, 0x41):
 			info['name'] = 'poparg'
 			info['arg'] = const.getStr(self.offset)
-			desc = '{name} {arg}'.format(**info)
+			info['byref'] = True if self.id == 0x41 else False
+			desc = '{name} {arg}{byref}'.format(name=info['name'], arg=info['arg'], byref=' byref' if info['byref'] else '')
 
 		elif self.id in (0x00,0x01,0x02, 0x31, 0x33,0x34):
 			info['name'] = 'load'

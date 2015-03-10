@@ -64,7 +64,7 @@ if __name__ == '__main__':
 
 		out = tempfile.NamedTemporaryFile('wb', prefix='decompileall_', suffix='.src', delete=False)
 		for line in src:
-			out.write((line + '\n').encode('iso8859-15'))
+			out.write((line + '\n').encode('utf8'))
 		out.close()
 
 		path = subprocess.check_output(['winepath', '-w', out.name]).decode().strip()
@@ -97,6 +97,7 @@ if __name__ == '__main__':
 	cmperr = s.count('cmperr')
 	diff = s.count('diff')
 	ok = s.count('ok')
+	bins = len(status)
 	f = (bins, decerr,decerr/bins, cmperr,cmperr/bins, diff,diff/bins, ok,ok/bins)
 	print('Done. Took: {}'.format(datetime.datetime.now()-start))
 	print('Found: {}, Decompile Errors: {} ({:.1%}), Compile Errors: {} ({:.1%}), Different: {} ({:.1%}), OK: {} ({:.1%})'.format(*f))

@@ -209,8 +209,8 @@ class ECLFile:
 		'''
 
 		# Preparatory step
-		fun = {} # idx: number of parameters
-		used = [] # List of used usages, to workaround a compiler bug (see below)
+		fun = {} # {start idx: number of parameters}
+		used = {} # List of used usages, to workaround a compiler bug (see below)
 
 		idx = 0
 		while idx < len(self.instr):
@@ -247,26 +247,24 @@ class ECLFile:
 			elif name == 'run':
 				if not info['func'] in used:
 					# Will use this later to output unused functions
-					used.append(info['func'])
+					used[info['func']] = idx
 
 			idx += 1
 
-		unusedB = [] # Unused functions to be outputted before code starts
-		unusedA = [] # Unused functions to be outputted after code ended
-		us = False
+		unused = collections.OrderedDict() # Unused functions to be outputted any moment from index in key
+		idx = 0
 		for u in self.usages:
 			for f in u.func:
-				if f not in used:
-					if us:
-						unusedA.append(f)
-					else:
-						unusedB.append(f)
+				if f not in used.keys():
+					if idx not in unused.keys():
+						unused[idx] = []
+					unused[idx].append(f)
 				else:
-					us = True
+					idx = used[f]
 
 		self.log.debug('Functions: %s', fun)
-		self.log.debug('Unused usages before the code block: %s', unusedB)
-		self.log.debug('Unused usages after the code block: %s', unusedA)
+		self.log.debug('Used usages: %s', used)
+		self.log.debug('Unused usages: %s', unused)
 
 		# Output header
 		yield('// Source decompiled from binary using decompile.py')
@@ -367,10 +365,6 @@ class ECLFile:
 				yield('use {};'.format(u.name))
 		yield('')
 
-		# Outputs dummy function (see above)
-		if unusedB:
-			yield from dummyFunction(unusedB, 'before')
-
 		# Parse the instructions
 		progParms = None # Will contain parameters for program block until they are outputted
 		funcParms = None # Will contain parameters for user function block until outputted
@@ -385,6 +379,12 @@ class ECLFile:
 			while blk and blk[-1].type == 'if' and blk[-1].end == idx:
 				del blk[-1]
 				yield(ind('endif'))
+
+			# Outputs dummy function if needed (see above)
+			nextUnused = min(unused.keys()) if unused else None
+			if not blk and nextUnused is not None and idx >= nextUnused:
+				yield from dummyFunction(unused[nextUnused], str(nextUnused))
+				del unused[nextUnused]
 
 			# Parse next instruction
 			try:
@@ -403,7 +403,7 @@ class ECLFile:
 				# so I need to do some guessing to figure out where it will start.
 				# Will start it before first local variable is declared
 				yield('program decompiled()')
-				blk.append(Block('program', blk))
+				blk.append(Block('program', blk, idx))
 				progStarted = True
 
 			if idx in fun.keys():
@@ -415,7 +415,7 @@ class ECLFile:
 					yield('')
 				funcParms = []
 				funcName = 'func{}'.format(idx)
-				blk.append(Block('function', None))
+				blk.append(Block('function', None, idx))
 
 			if funcParms is not None and name != 'poparg':
 				# Outputs user function directive
@@ -428,7 +428,7 @@ class ECLFile:
 				if not len(blk) or blk[-1].type != 'program':
 					# Auto-starting program block
 					progParms = []
-					blk.append(Block('program', blk))
+					blk.append(Block('program', blk, idx))
 				progParms.append(info['arg'])
 				blk[-1].vars.append(info['arg'])
 
@@ -604,15 +604,22 @@ class ECLFile:
 							gd, gi = to.parse(self.const, self.usages)
 							end = gi['to']
 							typ = 'if'
-						else:
-							# Jumping backward: this should be the endwhile statement
+						elif toInfo['to'] <= idx and ( not blk or toInfo['to'] > blk[-1].start ):
+							# Jumping backward but not too much
+							# this could be the endwhile statement
 							typ = 'while'
+						else:
+							# This should be a "continue" statement of a parent while block,
+							# trying to confuse us.
+							# Just ignore it for the moment and start a standard if block
+							typ = 'if'
 					else:
 						# No mathing jump found, this is a simple if block
 						typ = 'if'
 					yield(ind('{}( {}{} )'.format(typ, op, reg.pop())))
-					b = Block(typ, blk)
-					b.els = elseInstr
+					b = Block(typ, blk, idx)
+					if typ == 'if':
+						b.els = elseInstr
 					b.end = end
 					blk.append(b)
 				elif info['cond'] is None and blk and blk[-1].type == 'if' and blk[-1].els == idx:
@@ -622,13 +629,16 @@ class ECLFile:
 					# This is the end jump of the current "while" statement
 					yield(ind('endwhile',-1))
 					del blk[-1]
+				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
+					# Jumps backwards before current block start, should be a "continue" statement
+					yield(ind('continue;'))
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
 
 			elif name == 'foreach':
 				if info['act'] == 'start':
 					what = reg.pop()
-					b = Block('foreach', blk)
+					b = Block('foreach', blk, idx)
 					it = Iterator(len(blk))
 					b.vars.append(it)
 					b.vars.append(what)
@@ -636,7 +646,13 @@ class ECLFile:
 					reg.append(it)
 					reg.append(what)
 					reg.append(str(it))
-					yield(ind('foreach {} in {}'.format(reg[-1], reg[-2])))
+					l = reg[-1]
+					r = reg[-2]
+					for o in list(ops.keys()) + ['.']:
+						if r.find(o) != -1:
+							r = '( {} )'.format(r)
+							break;
+					yield(ind('foreach {} in {}'.format(l, r)))
 					blk.append(b)
 				elif info['act'] == 'step':
 					# Just ignore it
@@ -645,17 +661,12 @@ class ECLFile:
 					self.log.error('0x%04X: unimplemented foreach', idx)
 
 			elif name == 'progend':
-				try:
-					nd, ni = self.instr[idx+1].parse(self.const, self.usages)
-				except IndexError:
-					nd, ni = (None, None)
-
-				if ni is None or ni['name'] == 'poparg':
+				if idx == len(self.instr) - 1 or idx + 1 in fun.keys():
 					# This is the final instruction, just ignore it
 					yield('')
 				else:
 					# This is a return out of the program block
-					yield(ind('return {};'.format(reg[-1] if len(reg) else '')))
+					yield(ind('return{};'.format(' '+reg[-1] if len(reg) else '')))
 
 			elif name == 'blockend':
 				# Output registers before deleting them, from left to right
@@ -707,9 +718,10 @@ class ECLFile:
 			yield('')
 			progStarted = True
 
-		# Outputs dummy function (see above)
-		if unusedA:
-			yield from dummyFunction(unusedA, 'after')
+		# Outputs dummy function if needed (see above)
+		for idx, u in unused.items():
+			yield from dummyFunction(u, str(idx))
+			del unused[idx]
 
 
 	def optimize(self, source):
@@ -822,8 +834,9 @@ class W(collections.UserList):
 
 class Block():
 	''' This represents an indentation/scope block '''
-	def __init__(self, type, blocks):
+	def __init__(self, type, blocks, start):
 		self.type = type
+		self.start = start
 		if blocks is not None and len(blocks):
 			# Copy vars from parent
 			self.vars = blocks[-1].vars[:]

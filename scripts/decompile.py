@@ -254,8 +254,8 @@ class ECLFile:
 			idx += 1
 
 		unused = collections.OrderedDict() # Unused functions to be outputted any moment from index in key
-		idx = 0
 		for u in self.usages:
+			idx = 0
 			for f in u.func:
 				if f not in used.keys():
 					if idx not in unused.keys():

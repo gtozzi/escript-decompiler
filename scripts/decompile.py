@@ -793,33 +793,40 @@ class ECLFile:
 		# Remove emptied lines
 		ret = [ i for i in ret if i is not None ]
 
-		i = -1
-		src = ret[:]
-		for line in src:
-			i += 1
+		# Loop until at least one block is converted
+		found = True
+		while found:
+			found = False
+			i = -1
+			src = ret[:]
+			for line in src:
+				i += 1
 
-			# Convert while into for loops
-			whil = whileRe.match(line)
-			if whil:
-				assign = assignRe.match(src[i-1])
-				var = varRe.match(src[i-1])
-				if assign or var:
-					k = i
-					while True:
-						k += 1
-						ew = endwhileRe.match(src[k])
-						if ew:
-							end = k
+				# Convert first while into for loop
+				whil = whileRe.match(line)
+				if whil:
+					assign = assignRe.match(src[i-1])
+					var = varRe.match(src[i-1])
+					if assign or var:
+						k = i
+						while True:
+							k += 1
+							ew = endwhileRe.match(src[k])
+							if ew and ew.group('ind') == whil.group('ind'):
+								end = k
+								break
+						ass2 = assignRe.match(src[end-1])
+						if ass2:
+							ret[i] = whil.group('ind') + 'for( {} {} {}; {} )'.format(src[i-1].strip(), whil.group('var'), whil.group('cond'), src[end-1].strip().rstrip(';'))
+							ret[i-1] = None
+							ret[end-1] = None
+							ret[end] = ew.group('ind') + 'endfor'
+
+							found = True
 							break
-					ass2 = assignRe.match(src[end-1])
-					if ass2:
-						ret[i] = whil.group('ind') + 'for( {} {} {}; {} )'.format(src[i-1].strip(), whil.group('var'), whil.group('cond'), src[end-1].strip().rstrip(';'))
-						ret[i-1] = None
-						ret[end-1] = None
-						ret[end] = ew.group('ind') + 'endfor'
 
-		# Remove emptied lines
-		ret = [ i for i in ret if i is not None ]
+			# Remove emptied lines
+			ret = [ i for i in ret if i is not None ]
 
 		i = -1
 		src = ret[:]

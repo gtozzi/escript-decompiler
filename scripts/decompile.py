@@ -40,19 +40,22 @@ def parseStr(val, fixed=False):
 	
 	@param fixed boolean: If given, makes sure that all the bytes after the NULL terminator are null too
 	'''
-	ret = ''
+	ret = b''
 	term = False
 	for char in val:
 		if term and char != 0:
 			raise ValueError("Unexpected non-null byte {:02X} after null terminator".format(char))
 
 		if char != 0:
-			ret += chr(char)
+			ret += bytes([char])
 		elif fixed:
 			term = True
 		else:
 			break
-	return ret
+	try:
+		return ret.decode('utf8')
+	except UnicodeDecodeError:
+		return ret.decode('iso8859-15')
 
 
 class ECLFile:

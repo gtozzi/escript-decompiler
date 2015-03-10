@@ -27,14 +27,13 @@ def parseInt(val):
 	ret = struct.unpack('i',val)
 	return ret[0]
 
-def parseFloat(val):
-	''' Parses a float in binary format '''
+def parseDouble(val):
+	''' Parses a double in binary format '''
 	if len(val) != 8:
-		raise ValueError("Floats must be 8 bytes long")
-	#FIXME: This is absolutely wrong!!
-	mant = parseInt(val[:6])
-	exp = parseInt(val[6:])
-	return str(mant) + '/' + str(exp)
+		raise ValueError("Doubles must be 8 bytes long")
+
+	ret = struct.unpack('d',val)
+	return ret[0]
 
 def parseStr(val, fixed=False):
 	''' Parses a string in binary format. NULL terminated
@@ -423,6 +422,15 @@ class ECLFile:
 				funcParms = None
 				funcName = None
 
+			if blk and blk[-1].type == 'case':
+				# Output case statement if needed
+				if idx in blk[-1].cases.keys():
+					yield(ind('{}:'.format(blk[-1].cases[idx]) if blk[-1].cases[idx] else 'default:',-1))
+				# Output endcase when end reached
+				if blk[-1].end is not None and blk[-1].end == idx:
+					del blk[-1]
+					yield(ind('endcase'))
+
 
 			if name == 'getarg':
 				if not len(blk) or blk[-1].type != 'program':
@@ -467,7 +475,7 @@ class ECLFile:
 					v = blk[-1].vars[info['id']]
 				elif info['type'] == 'str':
 					v = quote(info['val'])
-				elif info['type'] in ('int','float'):
+				elif info['type'] in ('int','double'):
 					v = str(info['val'])
 				elif info['type'] == 'error':
 					v = 'error'
@@ -629,6 +637,12 @@ class ECLFile:
 					# This is the end jump of the current "while" statement
 					yield(ind('endwhile',-1))
 					del blk[-1]
+				elif info['cond'] is None and blk and blk[-1].type == 'case' and idx+1 in blk[-1].cases.keys():
+					# Jumps out of the case block, every goto should have the same "to"
+					if blk[-1].end is None:
+						blk[-1].end = info['to']
+					elif blk[-1].end != info['to']:
+						self.log.error('0x%04X: unexpected case goto (block: %s)', idx, blk[-1])
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
@@ -676,6 +690,13 @@ class ECLFile:
 				else:
 					self.log.error('0x%04X: unimplemented foreach', idx)
 
+			elif name == 'case':
+				yield(ind('case {}'.format(reg.pop())))
+				b = Block('case', blk, idx)
+				b.cases = info['cases']
+				b.end = None # End is unknown at the moment, first goto will tell it
+				blk.append(b)
+
 			elif name == 'progend':
 				if idx == len(self.instr) - 1 or idx + 1 in fun.keys():
 					# This is the final instruction, just ignore it
@@ -704,8 +725,6 @@ class ECLFile:
 					self.log.warning('No block to end')
 
 			elif name == 'return':
-				if not len(blk) or blk[-1].type != 'function':
-					self.log.critical('0x%04X: return outside function', idx)
 				yield(ind('return {};'.format(reg.pop())))
 
 			elif name is None:
@@ -1192,8 +1211,8 @@ class Instruction():
 				info['val'] = const.getInt(self.offset)
 			elif self.id == 0x01:
 				info['var'] = False
-				info['type'] = 'float'
-				info['val'] = const.getFloat(self.offset)
+				info['type'] = 'double'
+				info['val'] = const.getDouble(self.offset)
 			elif self.id == 0x02:
 				info['var'] = False
 				info['type'] = 'str'
@@ -1347,6 +1366,24 @@ class Instruction():
 				info['act'] = 'step'
 			desc = '{act} {name}'.format(**info)
 
+		elif self.id == 0x37:
+			info['name'] = 'case'
+			info['cases'] = {}
+			i = self.offset
+			while True:
+				info['cases'][const.getShort(i)] = const.getInt(i+3) # { idx: val }
+				n = const.getByte(i+2)
+				if n == 0xfe:
+					# This is the last case
+					break
+				elif n == 0xff:
+					# More cases to be read
+					pass
+				else:
+					raise ValueError('Unexpected case byte {:02X}'.format(n))
+				i += 7
+			desc = 'case jump ({} cases)'.format(len(info['cases']))
+
 		elif self.id == 0x20:
 			info['name'] = 'progend'
 			desc = 'end program'
@@ -1411,13 +1448,21 @@ class ConstantsSection(Section):
 		''' Returns integer at given position '''
 		return parseInt(self.data[pos+4 : pos+4+4])
 
-	def getFloat(self, pos):
-		''' Returns a float at given position '''
-		return parseFloat(self.data[pos+4 : pos+4+8])
+	def getShort(self, pos):
+		''' Returns a short unsigned integer at given position '''
+		return parseInt(self.data[pos+4 : pos+4+2])
+
+	def getDouble(self, pos):
+		''' Returns a double at given position '''
+		return parseDouble(self.data[pos+4 : pos+4+8])
 
 	def getStr(self, pos):
 		''' Returns string at given position '''
 		return parseStr(self.data[pos+4:])
+
+	def getByte(self, pos):
+		''' Returns a single byte at given position '''
+		return self.data[pos+4]
 
 	def __repr__(self):
 		inner = self.data[4:]

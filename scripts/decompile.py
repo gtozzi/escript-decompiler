@@ -208,8 +208,10 @@ class ECLFile:
 		@return list of lines
 		'''
 
-		# Preparatory step: scan for functions (there is no token for function start)
+		# Preparatory step
 		fun = {} # idx: number of parameters
+		used = [] # List of used usages, to workaround a compiler bug (see below)
+
 		idx = 0
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -220,6 +222,7 @@ class ECLFile:
 			except KeyError:
 				name = None
 
+			# Scan for functions (there is no token for function start)
 			if name == 'function':
 				if info['to'] not in fun.keys():
 					# Found a new function, scan it
@@ -240,9 +243,30 @@ class ECLFile:
 
 						idf += 1
 
+			# Scan for used functions (outputs unused below)
+			elif name == 'run':
+				if not info['func'] in used:
+					# Will use this later to output unused functions
+					used.append(info['func'])
+
 			idx += 1
 
+		unusedB = [] # Unused functions to be outputted before code starts
+		unusedA = [] # Unused functions to be outputted after code ended
+		us = False
+		for u in self.usages:
+			for f in u.func:
+				if f not in used:
+					if us:
+						unusedA.append(f)
+					else:
+						unusedB.append(f)
+				else:
+					us = True
+
 		self.log.debug('Functions: %s', fun)
+		self.log.debug('Unused usages before the code block: %s', unusedB)
+		self.log.debug('Unused usages after the code block: %s', unusedA)
 
 		# Output header
 		yield('// Source decompiled from binary using decompile.py')
@@ -255,7 +279,6 @@ class ECLFile:
 		idx = 0 # Index of next instruction to be read (PC, Program Counter)
 		glo = [] # Map of global var IDs => names
 		reg = W() # Map of W registers (original is a ValueStack: http://it.cppreference.com/w/cpp/container/deque)
-		used = [] # List of used usages, to workaround a compiler bug (see below)
 
 		# Utility functions and vars
 		ops = {
@@ -266,6 +289,7 @@ class ECLFile:
 			'<=': 40,
 			'<':  40,
 			'!=': 40,
+			'in': 40,
 			'&&': 30,
 			'||': 30,
 			'&':  26,
@@ -320,12 +344,32 @@ class ECLFile:
 				right = '({})'.format(right)
 
 			return left, right
+		def dummyFunction(unused, suffix):
+			# Outputs unused usages: since the compiler is purging unused functions but
+			# not unused usages (from the usages section), this is necessary to make
+			# the binary compiled from the decompiled source identical to the original
+			# one
+			yield('')
+			yield('')
+			yield('// Dummy function, this is never invoked')
+			yield('// This is necessary to make the compiled decompiled source binary equal')
+			yield('// to original because of a bug in the compiler (optimizer). This can be')
+			yield('// safely deleted without any effect on the code execution')
+			yield('function decompiler_dummy_function_{}(p)'.format(suffix))
+			for f in unused:
+				yield('\t{}({});'.format(f.name, ', '.join(['p'] * f.parm)))
+			yield('endfunction')
+			yield('')
 
 		# Start with usages
 		for u in self.usages:
 			if u.name not in ('basic','basicio'):
 				yield('use {};'.format(u.name))
 		yield('')
+
+		# Outputs dummy function (see above)
+		if unusedB:
+			yield from dummyFunction(unusedB, 'before')
 
 		# Parse the instructions
 		progParms = None # Will contain parameters for program block until they are outputted
@@ -393,9 +437,6 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
-				if not info['func'] in used:
-					# Will use this later to output unused functions
-					used.append(info['func'])
 				parms = getParms(info['func'].parm)
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
@@ -467,9 +508,9 @@ class ECLFile:
 					# Logical: and, or
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
-				elif info['op'] in ('=', '!=', '<','<=','>','>='):
+				elif info['op'] in ('=', '!=', '<','<=','>','>=', 'in'):
 					# Comparison: equal, not equal, lesser than, lesser or equal than,
-					#             greater than, greater or equal than
+					#             greater than, greater or equal than, in array
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] == '[]':
@@ -554,7 +595,7 @@ class ECLFile:
 					toDescr, toInfo = to.parse(self.const, self.usages)
 					elseInstr = None
 					end = info['to']
-					if toInfo['name'] == 'goto':
+					if toInfo['name'] == 'goto' and toInfo['cond'] is None:
 						# This could be the "else" statement on an if or the jump back
 						# on a while
 						if toInfo['to'] > idx:
@@ -582,7 +623,7 @@ class ECLFile:
 					yield(ind('endwhile',-1))
 					del blk[-1]
 				else:
-					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk)
+					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
 
 			elif name == 'foreach':
 				if info['act'] == 'start':
@@ -624,8 +665,8 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1].type == 'while':
-					# While block is ended automatically
+				if len(blk) and blk[-1].type in ('while', 'if'):
+					# While and if blocks are ended automatically
 					pass
 				elif len(blk):
 					yield(ind("end{}".format(blk[-1].type), -1))
@@ -666,27 +707,9 @@ class ECLFile:
 			yield('')
 			progStarted = True
 
-		# Outputs unused usages: since the compiler is purging unused functions but
-		# not unused usages (from the usages section), this is necessary to make
-		# the binary compiled from the decompiled source identical to the original
-		# one
-		unused = []
-		for u in self.usages:
-			for f in u.func:
-				if f not in used:
-					unused.append(f)
-		if unused:
-			yield('')
-			yield('')
-			yield('// Dummy function, this is never invoked')
-			yield('// This is necessary to make the compiled decompiled source binary equal')
-			yield('// to original because of a bug in the compiler (optimizer). This can be')
-			yield('// safely deleted without any effect on the code execution')
-			yield('function decompiler_dummy_function(p)')
-			for f in unused:
-				yield('\t{}({});'.format(f.name, ', '.join(['p'] * f.parm)))
-			yield('endfunction')
-			yield('')
+		# Outputs dummy function (see above)
+		if unusedA:
+			yield from dummyFunction(unusedA, 'after')
 
 
 	def optimize(self, source):
@@ -807,7 +830,7 @@ class Block():
 		else:
 			self.vars = []
 	def __repr__(self):
-		return '<Block {}>'.format(self.type)
+		return '<Block {}>'.format(self.__dict__)
 
 class Array(collections.UserList):
 	''' Utility class to represent an array '''
@@ -1170,7 +1193,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x42, 0x44,0x45,0x46):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x32, 0x42, 0x44,0x45,0x46):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -1218,6 +1241,9 @@ class Instruction():
 			elif self.id == 0x1e:
 				info['op'] = '.'
 				space = False
+
+			elif self.id == 0x32:
+				info['op'] = 'in'
 
 			elif self.id == 0x42:
 				info['op'] = ':=&'

@@ -237,7 +237,7 @@ class ECLFile:
 
 
 		# Preparatory step
-		used = {} # List of used usages, to workaround a compiler bug (see below)
+		used = collections.OrderedDict() # List of used usages, to workaround a compiler bug (see below)
 
 		idx = 0
 		while idx < len(self.instr):
@@ -272,26 +272,27 @@ class ECLFile:
 
 			# Scan for used functions (outputs unused below)
 			elif name == 'run':
-				if not info['func'] in used:
+				if not info['func'] in used.keys():
 					# Will use this later to output unused functions
 					used[info['func']] = idx
 
 			idx += 1
 
-		unused = collections.OrderedDict() # Unused functions to be outputted any moment from index in key
+		# Determine functions output order { func : min index }
+		funcOrder = collections.OrderedDict()
 		for u in self.usages:
-			idx = 0
-			for f in u.func:
-				if f not in used.keys():
-					if idx not in unused.keys():
-						unused[idx] = []
-					unused[idx].append(f)
-				else:
-					idx = used[f]
+			for i in range(0,len(u.func)):
+				cur = u.func[i]
+				before = [u.func[k] for k in range(0,i)]
+				idx = 0
+				for b in before:
+					if b in used.keys() and used[b] > idx:
+						idx = used[b]
+				funcOrder[cur] = idx
+
 
 		self.log.debug('Functions: %s', fun)
-		self.log.debug('Used usages: %s', used)
-		self.log.debug('Unused usages: %s', unused)
+
 
 		# Output header
 		yield('// Source decompiled from binary using decompile.py')
@@ -406,17 +407,21 @@ class ECLFile:
 				del blk[-1]
 				yield(ind('endif'))
 
-			# Outputs dummy function if needed (see above)
-			nextUnused = min(unused.keys()) if unused else None
-			if not blk and nextUnused is not None and idx >= nextUnused:
-				yield from dummyFunction(unused[nextUnused], str(nextUnused))
-				del unused[nextUnused]
-
 			# Parse next instruction
 			try:
 				name = info['name']
 			except KeyError:
 				name = None
+
+			# Outputs dummy function if needed (see above)
+			outUnused = []
+			for f, i in funcOrder.items():
+				if i >= idx and ( name != 'run' or info['func'] != f ):
+					outUnused.append(f)
+			if outUnused:
+				yield from dummyFunction(outUnused, str(idx))
+			for o in outUnused:
+				del funcOrder[o]
 
 			if progParms is not None and name != 'getarg':
 				# Parameters are over: outputs program directive
@@ -474,6 +479,8 @@ class ECLFile:
 				blk[-1].vars.append(info['arg'])
 
 			elif name == 'run':
+				if info['func'] in funcOrder.keys():
+					del funcOrder[info['func']]
 				parms = getParms(info['func'].parm)
 				if len(parms) == 1 and parms[0] == '""':
 					parms = [] # Omit a single null string parameter
@@ -783,9 +790,8 @@ class ECLFile:
 			progStarted = True
 
 		# Outputs dummy function if needed (see above)
-		for idx, u in unused.items():
-			yield from dummyFunction(u, str(idx))
-			del unused[idx]
+		if len(funcOrder):
+			yield from dummyFunction(funcOrder, 'last')
 
 
 	def optimize(self, source):

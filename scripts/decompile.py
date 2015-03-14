@@ -479,7 +479,7 @@ class ECLFile:
 					if i == idx:
 						if v is None:
 							c = 'default'
-							if blk[-1].end is None:
+							if blk[-1].end is None and idx != blk[-1].start + 1:
 								# Case probably ends here
 								del blk[-1]
 								yield(ind('endcase'))
@@ -683,7 +683,7 @@ class ECLFile:
 						# This could be the "else" statement on an if or the jump back
 						# on a while
 						if toInfo['to'] > info['to']:
-							# Jumping forward: this should be an else statement
+							# Jumping forward: this could be an else statement
 							obstacle = False
 							forOpen = 0
 							for b in blk:
@@ -707,6 +707,11 @@ class ECLFile:
 										elif iin['act'] == 'step':
 											obstacle = True
 											break
+							if not obstacle:
+								# Safety check: jump leading exactly to a step foreach is a continue
+								ide, iin = self.instr[toInfo['to']].parse(self.const, self.usages)
+								if iin['name'] == 'foreach' and iin['act'] == 'step':
+									obstacle = True
 							if not obstacle:
 								elseInstr = info['to'] - 1
 								gd, gi = to.parse(self.const, self.usages)
@@ -757,9 +762,14 @@ class ECLFile:
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
-				elif info['cond'] is None and blk and blk[-1].end is not None and info['to'] > blk[-1].end:
+				elif info['cond'] is None and blk and hasattr(blk[-1],'end') and blk[-1].end is not None and info['to'] > blk[-1].end:
 					# Jumps forward after current block end, should be a "break" statement
-					yield(ind('break;'))
+					ide, iin = self.instr[info['to']].parse(self.const, self.usages)
+					if iin['name'] == 'foreach' and iin['act'] == 'step':
+						# Jumpt exactly on a foreach step statement, should be a "continue" instead
+						yield(ind('continue;'))
+					else:
+						yield(ind('break;'))
 				elif info['cond'] is None and blk and blk[-1].type == 'case':
 					# This should be a "break" statement for a case block
 					yield(ind('break;'))

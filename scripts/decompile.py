@@ -328,6 +328,7 @@ class ECLFile:
 			'|':  22,
 			'*':  20,
 			'/':  20,
+			'%':  20,
 			'-':  10,
 			'+':  10,
 		}
@@ -575,9 +576,8 @@ class ECLFile:
 					else:
 						r = unquote(r)
 					res = '{}.{}'.format(l, r)
-				elif info['op'] in ('+', '-', '*', '/'):
-					# Arithmetic: concatenation/addition, subtraction, multiplication, division
-					# Concatenation / Addition
+				elif info['op'] in ('+', '-', '*', '/', '%'):
+					# Arithmetic: concatenation/addition, subtraction, multiplication, division, modulus
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] in ('&', '|', '^'):
@@ -1258,7 +1258,7 @@ class Instruction():
 
 		'TOK_REFTO',                                               # 65 0x41
 		'INS_POP_PARAM_BYREF',                                     # 66 0x42
-		'TOK_MODULUS',
+		'TOK_MODULUS',                                             # 67 0x43
 
 		#'TOK_BSLEFT',
 		#'TOK_BSRIGHT',
@@ -1386,7 +1386,7 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x32, 0x42, 0x44,0x45,0x46):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x32, 0x42, 0x43, 0x44,0x45,0x46):
 			info['name'] = 'assign'
 			space = True
 			if self.id == 0x04:
@@ -1440,6 +1440,9 @@ class Instruction():
 
 			elif self.id == 0x42:
 				info['op'] = ':=&'
+
+			elif self.id == 0x43:
+				info['op'] = '%'
 
 			elif self.id == 0x44:
 				info['op'] = '&'

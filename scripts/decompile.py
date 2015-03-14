@@ -503,10 +503,9 @@ class ECLFile:
 				pass
 
 			elif name == 'function':
-				if fun[info['to']]['args']:
-					parms = reg[0 - fun[info['to']]['args']:]
-				else:
-					parms = []
+				parms = []
+				for i in range(0,fun[info['to']]['args']):
+					parms.insert(0, reg.pop())
 				reg.append('{}({})'.format(fun[info['to']]['name'], ', '.join(parms)))
 
 			elif name == 'load':

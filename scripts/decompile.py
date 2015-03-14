@@ -668,9 +668,22 @@ class ECLFile:
 						# on a while
 						if toInfo['to'] > idx:
 							# Jumping forward: this should be an else statement
-							elseInstr = info['to'] - 1
-							gd, gi = to.parse(self.const, self.usages)
-							end = gi['to']
+							obstacle = False
+							forOpen = 0
+							for i in range(info['to'], toInfo['to']):
+								# Safety check: don't confuse and else with a break out of foreach
+								ide, iin = self.instr[i].parse(self.const, self.usages)
+								if iin['name'] == 'foreach':
+									if iin['act'] == 'start':
+										forOpen += 1
+									elif iin['act'] == 'step' and forOpen > 0:
+										forOpen -= 1
+									elif iin['act'] == 'step':
+										obstacle = True
+							if not obstacle:
+								elseInstr = info['to'] - 1
+								gd, gi = to.parse(self.const, self.usages)
+								end = gi['to']
 							typ = 'if'
 						elif toInfo['to'] <= idx and ( not blk or toInfo['to'] > blk[-1].start ):
 							# Jumping backward but not too much

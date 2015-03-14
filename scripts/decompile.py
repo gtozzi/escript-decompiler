@@ -484,8 +484,8 @@ class ECLFile:
 								del blk[-1]
 								yield(ind('endcase'))
 								continue
-							elif blk[-1].end == idx and not blk[-1].emptyDefault:
-								# Don't output empty default case unless a bogus goto is found
+							elif blk[-1].end == idx:
+								# Don't output empty default case at the end of the block
 								continue
 						elif isinstance(v, int):
 							c = v
@@ -756,9 +756,6 @@ class ECLFile:
 						blk[-1].end = info['to']
 					elif blk[-1].end != info['to']:
 						self.log.error('0x%04X: unexpected case goto (block: %s)', idx, blk[-1])
-					if idx == info['to'] - 1:
-						# Goto jumping to next instruction before the end: this case has an empty default block
-						blk[-1].emptyDefault = True
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
@@ -824,7 +821,6 @@ class ECLFile:
 				b = Block('case', blk, idx)
 				b.cases = info['cases']
 				b.end = None # End is unknown at the moment, first goto will tell it
-				b.emptyDefault = False # Maybe will be set to true later
 				blk.append(b)
 
 			elif name == 'progend':

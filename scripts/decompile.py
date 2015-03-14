@@ -375,6 +375,12 @@ class ECLFile:
 				right = '({})'.format(right)
 
 			return left, right
+		def encloseAny(val):
+			''' add parenthesys if any operator is detected inside the string '''
+			for o in ops:
+				if val.find(o) != -1:
+					return '({})'.format(val)
+			return val
 		def dummyFunction(unused, suffix):
 			# Outputs unused usages: since the compiler is purging unused functions but
 			# not unused usages (from the usages section), this is necessary to make
@@ -605,8 +611,7 @@ class ECLFile:
 			elif name == 'unary':
 				r = reg.pop()
 				if info['op'] in ('+','-','!'):
-					# Logical not
-					res = '{} {}'.format(info['op'], r)
+					res = '{} {}'.format(info['op'], encloseAny(r))
 				else:
 					self.log.error('0x%04X: unimplemented unary %s', idx, info['op'])
 				reg.append(res)
@@ -712,7 +717,7 @@ class ECLFile:
 					else:
 						# No mathing jump found, this is a simple if block
 						typ = 'if'
-					yield(ind('{}( {}{} )'.format(typ, op, reg.pop())))
+					yield(ind('{}( {}{} )'.format(typ, op, encloseAny(reg.pop()) if op else reg.pop())))
 					b = Block(typ, blk, idx)
 					if typ == 'if':
 						b.els = elseInstr
@@ -724,7 +729,7 @@ class ECLFile:
 						self.log.critical('0x%04X: unexpected until statement (block: %s)', idx, blk[-1])
 					op = '! ' if info['cond'] else ''
 					del blk[-1]
-					yield(ind('until( {}{} );'.format(op, reg.pop())))
+					yield(ind('until( {}{} );'.format(op, encloseAny(reg.pop()) if op else reg.pop())))
 				elif info['cond'] is None and blk and blk[-1].type == 'if' and blk[-1].els == idx:
 					# This is the else jump of the current "if" statement
 					blk[-1].resetVars()

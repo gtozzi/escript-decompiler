@@ -766,7 +766,7 @@ class ECLFile:
 					self.log.error('0x%04X: unimplemented foreach', idx)
 
 			elif name == 'case':
-				yield(ind('case {}'.format(reg.pop())))
+				yield(ind('case( {} )'.format(reg.pop())))
 				b = Block('case', blk, idx)
 				b.cases = info['cases']
 				b.end = None # End is unknown at the moment, first goto will tell it

@@ -592,7 +592,7 @@ class ECLFile:
 
 			elif name == 'unary':
 				r = reg.pop()
-				if info['op'] == '!':
+				if info['op'] in ('+','-','!'):
 					# Logical not
 					res = '{} {}'.format(info['op'], r)
 				else:
@@ -1381,8 +1381,12 @@ class Instruction():
 
 			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
 
-		elif self.id in (0x17,):
+		elif self.id in (0x15,0x16,0x17):
 			info['name'] = 'unary'
+			if self.id == 0x15:
+				info['op'] = '+'
+			if self.id == 0x16:
+				info['op'] = '-'
 			if self.id == 0x17:
 				info['op'] = '!'
 			desc = '{name} R := {op} R'.format(**info)

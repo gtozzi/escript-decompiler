@@ -940,7 +940,10 @@ class Struct(Array):
 	Derived from array because it will always be empty (no append token)
 	and and empty structure is represented just like an ampty array
 	'''
-	pass
+	def __str__(self):
+		if not len(self):
+			return 'struct'
+		return super().__str__()
 
 class Iterator():
 	''' This represents an iterator '''

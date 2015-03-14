@@ -377,6 +377,8 @@ class ECLFile:
 			return left, right
 		def encloseAny(val):
 			''' add parenthesys if any operator is detected inside the string '''
+			if not isinstance(val, str):
+				return val
 			for o in ops:
 				if val.find(o) != -1:
 					return '({})'.format(val)

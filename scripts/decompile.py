@@ -947,19 +947,34 @@ class ECLFile:
 				# Convert nested if/else blocks in elseif blocks
 				els = elseRe.match(ret[i])
 				if els:
+					k = i
+					while k < len(ret):
+						endif = endifRe.match(ret[k])
+						if endif and endif.group('ind') == els.group('ind'):
+							end = k
+							break
+						k += 1
 					ifr = ifRe.match(ret[i+1])
 					if ifr:
-						found += 1
-						ret[i] = ret[i] + ret[i+1].strip()
-						ret[i+1] = None
-						i += 1
-						while True:
-							i += 1
-							er = endifRe.match(ret[i])
-							ret[i] = ret[i][1:]
-							if er and er.group('ind') == ifr.group('ind'):
-								ret[i] = None
+						k = i+1
+						while k < len(ret):
+							endif = endifRe.match(ret[k])
+							if endif and endif.group('ind') == ifr.group('ind'):
+								endr = k
 								break
+							k += 1
+						if endr == end - 1:
+							found += 1
+							ret[i] = ret[i] + ret[i+1].strip()
+							ret[i+1] = None
+							i += 1
+							while True:
+								i += 1
+								er = endifRe.match(ret[i])
+								ret[i] = ret[i][1:]
+								if er and er.group('ind') == ifr.group('ind'):
+									ret[i] = None
+									break
 				i += 1
 
 			# Remove emptied lines

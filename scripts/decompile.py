@@ -848,6 +848,13 @@ class ECLFile:
 
 			idx += 1
 
+		# Ends any remaining block
+		for i in range(len(blk)-1,-1,-1):
+			yield(ind("end{}".format(blk[i].type), -1))
+			if blk[i].type == 'program':
+				yield('')
+			del blk[i]
+
 		# Outputs program block if it still has not been started yet.
 		# Looks like it doesn't make any difference in the final binary compiled file
 		if self.program is not None and not progStarted:
@@ -858,13 +865,6 @@ class ECLFile:
 			yield('endprogram')
 			yield('')
 			progStarted = True
-
-		# Ends any remaining block
-		for i in range(len(blk)-1,-1,-1):
-			yield(ind("end{}".format(blk[i].type), -1))
-			if blk[i].type == 'program':
-				yield('')
-			del blk[i]
 
 		# Outputs dummy function if needed (see above)
 		if len(funcOrder):

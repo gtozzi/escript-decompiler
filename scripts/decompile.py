@@ -518,7 +518,7 @@ class ECLFile:
 				parms = []
 				for i in range(0,fun[info['to']]['args']):
 					parms.insert(0, reg.pop())
-				reg.append('{}({})'.format(fun[info['to']]['name'], ', '.join(parms)))
+				reg.append('{}({})'.format(fun[info['to']]['name'], ', '.join([str(p) for p in parms])))
 
 			elif name == 'load':
 				if info['var'] and info['scope'] == 'global':

@@ -876,7 +876,7 @@ class ECLFile:
 		src = list(source)
 		ret = src[:]
 
-		varRe = re.compile('^(?P<ind>\s*)[lg]+[0-9]+;$')
+		varRe = re.compile('^(?P<ind>\s*)(?P<var>[lg]+[0-9]+);$')
 		valRe = re.compile('^(?P<ind>\s*)var (?P<var>[a-z0-9]+);$')
 		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := .+$', re.M)
 		whileRe = re.compile('^(?P<ind>\s*)while\( (?P<var>[a-z0-9]+) (?P<cond>.*) \)$')
@@ -912,9 +912,11 @@ class ECLFile:
 				# Convert first while into for loop
 				whil = whileRe.match(line)
 				if whil:
-					assign = assignRe.match(src[i-1])
-					var = varRe.match(src[i-1])
-					if assign or var:
+					pre = assignRe.match(src[i-1])
+					if not pre:
+						pre = varRe.match(src[i-1])
+
+					if pre and whil.group('var') == pre.group('var'):
 						k = i
 						while True:
 							k += 1

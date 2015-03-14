@@ -46,7 +46,7 @@ if __name__ == '__main__':
 	i = 0
 	for binf in sorted(sizes, key=sizes.get):
 		i += 1
-		print('{}/{}: {}'.format(i, len(sizes), binf))
+		print('\033[0;36m{}/{}: {}\033[0m'.format(i, len(sizes), binf))
 		if i <= args.skip:
 			print('skipping...')
 			continue

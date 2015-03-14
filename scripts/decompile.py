@@ -755,7 +755,7 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program'):
+				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program', 'function'):
 					# Do not end blocks ended automatically
 					pass
 				elif len(blk):

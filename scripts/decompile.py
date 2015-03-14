@@ -434,10 +434,11 @@ class ECLFile:
 				progParms = None
 				progStarted = True
 
-			if self.program is not None and self.program.args == 0 and not progStarted and name == 'var' and info['scope'] == 'local':
+			if self.program is not None and self.program.args == 0 and not progStarted and not blk and ((name == 'var' and info['scope'] == 'local') or name == 'consumer'):
 				# I know i have a program block, but no params will be passed
 				# so I need to do some guessing to figure out where it will start.
-				# Will start it before first local variable is declared
+				# Will start it before first local variable is declared or before
+				# first consumer
 				yield('program decompiled()')
 				blk.append(Block('program', blk, idx))
 				progStarted = True

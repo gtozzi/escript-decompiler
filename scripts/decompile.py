@@ -479,7 +479,12 @@ class ECLFile:
 					if i == idx:
 						if v is None:
 							c = 'default'
-							if blk[-1].end == idx:
+							if blk[-1].end is None:
+								# Case probably ends here
+								del blk[-1]
+								yield(ind('endcase'))
+								continue
+							elif blk[-1].end == idx:
 								# Don't output empty default case
 								continue
 						elif isinstance(v, int):
@@ -489,6 +494,8 @@ class ECLFile:
 						else:
 							raise RuntimeError('Unexpected type {} for case'.format(type(v)))
 						yield(ind('{}:'.format(c),-1))
+
+			if blk and blk[-1].type == 'case':
 				# Output endcase when end reached
 				if blk[-1].end is not None and blk[-1].end == idx:
 					del blk[-1]

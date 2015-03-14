@@ -1605,6 +1605,8 @@ class LogFormatter(logging.Formatter):
 
 if __name__ == '__main__':
 	import argparse
+	import tempfile
+	import subprocess
 
 	parser = argparse.ArgumentParser()
 	parser.add_argument('ecl_file', help='The compiled script')
@@ -1612,6 +1614,7 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--source', action='store_true', help='Dump disassembled source')
 	parser.add_argument('-o', '--optimized', action='store_true', help='Dump optimized source')
 	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
+	parser.add_argument('-c', '--check', action='store_true', help='Check and compare the output')
 	args = parser.parse_args()
 
 	log = logging.getLogger()
@@ -1622,15 +1625,50 @@ if __name__ == '__main__':
 	log.addHandler(ch)
 
 	ecl = ECLFile(args.ecl_file)
-	if args.dump:
+
+	if args.dump or args.check:
+		if args.check:
+			origf = tempfile.NamedTemporaryFile(prefix='DUMP_', suffix='_ORIG.txt', delete=False)
 		for l in ecl.dump():
-			print(l)
-	if args.source or args.optimized:
+			if args.dump:
+				print(l)
+			if args.check:
+				origf.write((l + os.linesep).encode('utf8'))
+		if args.check:
+			origf.close()
+
+	if args.source or args.optimized or args.check:
+		if args.check:
+			decf = tempfile.NamedTemporaryFile(suffix='_dec.src', delete=False)
 		src = []
 		for l in ecl.source():
 			if args.source:
 				print(l)
 			src.append(l)
-		if args.optimized:
+		if args.optimized or args.check:
 			for l in ecl.optimize(src):
-				print(l)
+				if args.optimized:
+					print(l)
+				if args.check:
+					decf.write((l + os.linesep).encode('utf8'))
+		if args.check:
+			decf.close()
+
+	if args.check:
+		path = subprocess.check_output(('winepath', '-w', decf.name)).decode().strip()
+		cmd = 'wine "' + os.path.join('scripts','ecompile.exe') + '" "' + path + '"'
+		ret = subprocess.call(cmd, shell=True)
+		#os.unlink(decf.name)
+		if ret:
+			print('Compilation failed')
+			sys.exit(1)
+
+		newf = tempfile.NamedTemporaryFile(prefix='DUMP_', suffix='_DEC.txt', delete=False)
+		e = decf.name[:-4] + '.ecl'
+		eclc = ECLFile(e)
+		for l in eclc.dump():
+			newf.write((l + os.linesep).encode('utf8'))
+		newf.close()
+
+		cmd = ('kdiff3', origf.name, newf.name)
+		subprocess.call(cmd)

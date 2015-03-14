@@ -338,12 +338,10 @@ class ECLFile:
 			return tabs + row.replace('\t', tabs + '\t')
 		def quote(string):
 			''' quotes a string '''
-			#TODO: fixme
-			return '"{}"'.format(string)
+			return '"{}"'.format(string.replace('"', '\\"'))
 		def unquote(string):
 			''' removes quotes from a quoted string '''
-			#TODO: fixme
-			return string[1:-1]
+			return string[1:-1].replace('\\"', '"')
 		def getParms(num):
 			''' retrieves num params from W '''
 			parms = []

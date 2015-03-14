@@ -814,6 +814,9 @@ class ECLFile:
 					# This is a return out of the program block
 					yield(ind('return{};'.format(' '+reg[-1] if len(reg) else '')))
 
+			elif name == 'exit':
+				yield(ind('exit;'))
+
 			elif name == 'blockend':
 				# Output registers before deleting them, from left to right
 				for i in range(0-info['num'],0):
@@ -1217,7 +1220,7 @@ class Instruction():
 		'RSV_JMPIFTRUE',
 
 		'RSV_GOTO',
-		'RSV_RETURN',                                              # 28 0x40
+		'RSV_RETURN',                                              # 40 0x28
 		'RSV_EXIT',
 
 		'RSV_LOCAL',
@@ -1542,6 +1545,10 @@ class Instruction():
 			info['name'] = 'blockend'
 			info['num'] = self.offset
 			desc = 'end block, del {num} from W'.format(**info)
+
+		elif self.id == 0x29:
+			info['name'] = 'exit'
+			desc = 'exit'
 
 		elif self.id in (0x39, 0x3a):
 			info['name'] = 'array'

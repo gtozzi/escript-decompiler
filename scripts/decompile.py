@@ -469,7 +469,15 @@ class ECLFile:
 				# Output case statement if needed
 				for v, i in blk[-1].cases.items():
 					if i == idx:
-						yield(ind('{}:'.format(v) if v is not None else 'default:',-1))
+						if v is None:
+							c = 'default'
+						elif isinstance(v, int):
+							c = v
+						elif isinstance(v, str):
+							c = quote(v)
+						else:
+							raise RuntimeError('Unexpected type {} for case'.format(type(v)))
+						yield(ind('{}:'.format(c),-1))
 				# Output endcase when end reached
 				if blk[-1].end is not None and blk[-1].end == idx:
 					del blk[-1]
@@ -705,8 +713,11 @@ class ECLFile:
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
-				elif info['cond'] is None and blk and info['to'] > blk[-1].end:
+				elif info['cond'] is None and blk and blk[-1].end is not None and info['to'] > blk[-1].end:
 					# Jumps forward after current block end, should be a "break" statement
+					yield(ind('break;'))
+				elif info['cond'] is None and blk and blk[-1].type == 'case':
+					# This should be a "break" statement for a case block
 					yield(ind('break;'))
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
@@ -1457,12 +1468,17 @@ class Instruction():
 					info['cases'][None] = idx
 					break
 				elif n == 0xff:
-					# This is a standard case, more cases to be read
+					# This is an integer case, more cases to be read
 					val = const.getInt(i + 3)
-					info['cases'][val] = idx
+					s = 4
+				elif n > 0x00 and n < 0xfe:
+					# This is a string case
+					val = const.getStr(i + 3, len=n)
+					s = n
 				else:
 					raise ValueError('Unexpected case byte {:02X}'.format(n))
-				i += 7
+				info['cases'][val] = idx
+				i += 3 + s
 			desc = 'case jump ({} cases)'.format(len(info['cases']))
 
 		elif self.id == 0x20:
@@ -1537,9 +1553,14 @@ class ConstantsSection(Section):
 		''' Returns a double at given position '''
 		return parseDouble(self.data[pos+4 : pos+4+8])
 
-	def getStr(self, pos):
-		''' Returns string at given position '''
-		return parseStr(self.data[pos+4:])
+	def getStr(self, pos, len=None):
+		''' Returns string at given position
+		@param len: if given, expects a fixed length string
+		'''
+		if len is None:
+			return parseStr(self.data[pos+4:])
+		else:
+			return parseStr(self.data[pos+4:pos+4+len], fixed=True)
 
 	def getByte(self, pos):
 		''' Returns a single byte at given position '''

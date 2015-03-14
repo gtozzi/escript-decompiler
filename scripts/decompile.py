@@ -705,6 +705,9 @@ class ECLFile:
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
+				elif info['cond'] is None and blk and info['to'] > blk[-1].end:
+					# Jumps forward after current block end, should be a "break" statement
+					yield(ind('break;'))
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
 

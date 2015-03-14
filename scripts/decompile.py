@@ -238,6 +238,7 @@ class ECLFile:
 
 		# Preparatory step
 		used = collections.OrderedDict() # List of used usages, to workaround a compiler bug (see below)
+		rep = {} # List of repeat...until blocks { start: end }
 
 		idx = 0
 		while idx < len(self.instr):
@@ -270,6 +271,10 @@ class ECLFile:
 
 						idf += 1
 
+			# Scan for start of repeat...until blocks
+			if name == 'goto' and info['cond'] is not None and info['to'] < idx:
+				rep[info['to']] = idx
+
 			# Scan for used functions (outputs unused below)
 			elif name == 'run':
 				if not info['func'] in used.keys():
@@ -292,7 +297,7 @@ class ECLFile:
 
 
 		self.log.debug('Functions: %s', fun)
-
+		self.log.debug('Repeat blocks: %s', rep)
 
 		# Output header
 		yield('// Source decompiled from binary using decompile.py')
@@ -470,6 +475,13 @@ class ECLFile:
 					del blk[-1]
 					yield(ind('endcase'))
 
+			if idx in rep.keys():
+				# Starts repeat...ultil block if needed
+				b = Block('repeat', blk, idx)
+				b.end = rep[idx]
+				yield(ind('repeat'))
+				blk.append(b)
+
 
 			if name == 'getarg':
 				if not len(blk) or blk[-1].type != 'program':
@@ -633,8 +645,8 @@ class ECLFile:
 			elif name == 'goto':
 				# A goto may be part of an if block or of a loop (for/while)
 				# proceed with some logical analysis and guessing
-				if info['cond'] is not None:
-					# Conditional jump starts an if or while section
+				if info['cond'] is not None and info['to'] > idx:
+					# Conditional forward jump starts an if or while section
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if section" on an if block or back to the
 					# block definition in a while block
@@ -670,6 +682,13 @@ class ECLFile:
 						b.els = elseInstr
 					b.end = end
 					blk.append(b)
+				elif info['cond'] is not None and info['to'] < idx:
+					# Conditional backward jump ends a repeat...until block
+					if blk[-1].type != 'repeat' or blk[-1].end != idx:
+						self.log.critical('0x%04X: unexpected until statement (block: %s)', idx, blk[-1])
+					op = '! ' if info['cond'] else ''
+					del blk[-1]
+					yield(ind('until( {}{} );'.format(op, reg.pop())))
 				elif info['cond'] is None and blk and blk[-1].type == 'if' and blk[-1].els == idx:
 					# This is the else jump of the current "if" statement
 					yield(ind('else',-1))
@@ -755,7 +774,7 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program', 'function'):
+				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program', 'function', 'repeat'):
 					# Do not end blocks ended automatically
 					pass
 				elif len(blk):

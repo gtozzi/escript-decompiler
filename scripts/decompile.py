@@ -471,6 +471,9 @@ class ECLFile:
 					if i == idx:
 						if v is None:
 							c = 'default'
+							if blk[-1].end == idx:
+								# Don't output empty default case
+								continue
 						elif isinstance(v, int):
 							c = v
 						elif isinstance(v, str):

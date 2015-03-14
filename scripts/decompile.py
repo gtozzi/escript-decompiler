@@ -444,6 +444,11 @@ class ECLFile:
 					del blk[-1]
 					yield(ind('endfunction'))
 					yield('')
+				elif len(blk) and blk[-1].type == 'program':
+					# Close the program block
+					del blk[-1]
+					yield(ind('endprogram'))
+					yield('')
 				curFunc = fun[idx]
 				curFunc['parms'] = []
 				blk.append(Block('function', None, idx))
@@ -705,8 +710,10 @@ class ECLFile:
 					yield(ind('foreach {} in {}'.format(l, r)))
 					blk.append(b)
 				elif info['act'] == 'step':
-					# Just ignore it
-					pass
+					if blk[-1].type != 'foreach':
+						self.log.critical('0x%04X: stepforeach outside of foreach block', idx)
+					del blk[-1]
+					yield(ind('endforeach'))
 				else:
 					self.log.error('0x%04X: unimplemented foreach', idx)
 
@@ -749,13 +756,11 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1].type in ('while', 'if'):
-					# While and if blocks are ended automatically
+				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program'):
+					# Do not end blocks ended automatically
 					pass
 				elif len(blk):
 					yield(ind("end{}".format(blk[-1].type), -1))
-					if blk[-1].type == 'program':
-						yield('')
 					del blk[-1]
 				else:
 					self.log.warning('No block to end')
@@ -769,10 +774,6 @@ class ECLFile:
 			else:
 				self.log.error('0x%04X: unimplemented instruction %s', idx, inst)
 
-
-			if idx == len(self.instr)-1 and len(blk) and blk[-1].type == 'function':
-				# Close opened function at the end of instructions
-				yield('endfunction')
 
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
@@ -788,6 +789,13 @@ class ECLFile:
 			yield('endprogram')
 			yield('')
 			progStarted = True
+
+		# Ends any remaining block
+		for i in range(len(blk)-1,-1,-1):
+			yield(ind("end{}".format(blk[i].type), -1))
+			if blk[i].type == 'program':
+				yield('')
+			del blk[i]
 
 		# Outputs dummy function if needed (see above)
 		if len(funcOrder):

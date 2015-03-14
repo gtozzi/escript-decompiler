@@ -699,6 +699,7 @@ class ECLFile:
 					yield(ind('until( {}{} );'.format(op, reg.pop())))
 				elif info['cond'] is None and blk and blk[-1].type == 'if' and blk[-1].els == idx:
 					# This is the else jump of the current "if" statement
+					blk[-1].resetVars()
 					yield(ind('else',-1))
 				elif info['cond'] is None and blk and blk[-1].type == 'while' and blk[-1].end-1 == idx:
 					# This is the end jump of the current "while" statement
@@ -959,6 +960,10 @@ class Block():
 			self.vars = blocks[-1].vars[:]
 		else:
 			self.vars = []
+		self.startVars = self.vars[:]
+	def resetVars(self):
+		''' Sets self.vars back to its initial value '''
+		self.vars = self.startVars[:]
 	def __repr__(self):
 		return '<Block {}>'.format(self.__dict__)
 

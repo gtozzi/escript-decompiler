@@ -669,20 +669,31 @@ class ECLFile:
 					if toInfo['name'] == 'goto' and toInfo['cond'] is None:
 						# This could be the "else" statement on an if or the jump back
 						# on a while
-						if toInfo['to'] > idx:
+						if toInfo['to'] > info['to']:
 							# Jumping forward: this should be an else statement
 							obstacle = False
 							forOpen = 0
-							for i in range(info['to'], toInfo['to']):
-								# Safety check: don't confuse and else with a break out of foreach
-								ide, iin = self.instr[i].parse(self.const, self.usages)
-								if iin['name'] == 'foreach':
-									if iin['act'] == 'start':
-										forOpen += 1
-									elif iin['act'] == 'step' and forOpen > 0:
-										forOpen -= 1
-									elif iin['act'] == 'step':
+							for b in blk:
+								# Safety check: don't confuse an else with a break
+								# an else jump sould be inside the end of any parent block
+								try:
+									if b.end is not None and ( toInfo['to'] > b.end or toInfo['to'] == b.end and b.type != 'if' ):
 										obstacle = True
+										break
+								except AttributeError:
+									continue
+							if not obstacle:
+								for i in range(info['to'], toInfo['to']):
+									# Safety check: don't confuse an else with a break out of foreach
+									ide, iin = self.instr[i].parse(self.const, self.usages)
+									if iin['name'] == 'foreach':
+										if iin['act'] == 'start':
+											forOpen += 1
+										elif iin['act'] == 'step' and forOpen > 0:
+											forOpen -= 1
+										elif iin['act'] == 'step':
+											obstacle = True
+											break
 							if not obstacle:
 								elseInstr = info['to'] - 1
 								gd, gi = to.parse(self.const, self.usages)

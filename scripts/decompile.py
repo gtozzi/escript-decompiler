@@ -55,6 +55,7 @@ def parseStr(val, fixed=False):
 	try:
 		return ret.decode('utf8')
 	except UnicodeDecodeError:
+		logging.warning('String with non utf8 encoding: %s', ret)
 		return ret.decode('iso8859-15')
 
 
@@ -908,7 +909,7 @@ class ECLFile:
 
 		varRe = re.compile('^(?P<ind>\s*)(?P<var>[lg]+[0-9]+);$')
 		valRe = re.compile('^(?P<ind>\s*)var (?P<var>[a-z0-9]+);$')
-		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := .+$', re.M)
+		assignRe = re.compile('^(?P<ind>\s*)(?P<var>[a-z0-9]+) := (?P<ass>.+)$', re.M)
 		whileRe = re.compile('^(?P<ind>\s*)while\( (?P<var>[a-z0-9]+) (?P<cond>.*) \)$')
 		endwhileRe = re.compile('^(?P<ind>\s*)endwhile$')
 		elseRe = re.compile('^(?P<ind>\s*)else$')
@@ -955,7 +956,7 @@ class ECLFile:
 								end = k
 								break
 						ass2 = assignRe.match(src[end-1])
-						if ass2:
+						if ass2 and ass2.group('ass').find(ass2.group('var')) != -1:
 							ret[i] = whil.group('ind') + 'for( {} {} {}; {} )'.format(src[i-1].strip(), whil.group('var'), whil.group('cond'), src[end-1].strip().rstrip(';'))
 							ret[i-1] = None
 							ret[end-1] = None

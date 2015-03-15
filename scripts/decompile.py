@@ -416,6 +416,7 @@ class ECLFile:
 		curFunc = None # Will contain parameters for user function block until outputted
 		progStarted = False # Will be true when program block has been started
 		lastCase = None # Will store when last "case" statement has been printed
+		lastProgEnd = None # Last endprogram found
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -448,11 +449,12 @@ class ECLFile:
 				progParms = None
 				progStarted = True
 
-			if self.program is not None and self.program.args == 0 and not progStarted and not blk and ((name == 'var' and info['scope'] == 'local') or name == 'consumer'):
+			if self.program is not None and self.program.args == 0 and not progStarted and not blk and \
+					((name == 'var' and info['scope'] == 'local') or name == 'consumer' or name == 'progend'):
 				# I know i have a program block, but no params will be passed
 				# so I need to do some guessing to figure out where it will start.
 				# Will start it before first local variable is declared or before
-				# first consumer
+				# first consumer or before progend
 				yield('program decompiled()')
 				blk.append(Block('program', blk, idx))
 				progStarted = True
@@ -562,7 +564,11 @@ class ECLFile:
 			elif name == 'function':
 				parms = []
 				for i in range(0,fun[info['to']]['args']):
-					parms.insert(0, reg.pop())
+					try:
+						parms.insert(0, reg.pop())
+					except IndexError:
+						#FIXME
+						self.log.warning('0x%04X: no more params to pass to function', idx)
 				reg.append('{}({})'.format(fun[info['to']]['name'], ', '.join([str(p) for p in parms])))
 
 			elif name == 'load':
@@ -573,7 +579,7 @@ class ECLFile:
 						v = blk[-1].vars[info['id']]
 					except IndexError:
 						#FIXME: really :)
-						self.log.warning('0x%04X: var %s has not been declared, using last one instead', info['id'])
+						self.log.warning('0x%04X: var %s has not been declared, using last one instead', idx, info['id'])
 						v = blk[-1].vars[-1]
 				elif info['type'] == 'str':
 					v = quote(info['val'])
@@ -860,9 +866,13 @@ class ECLFile:
 				if idx == len(self.instr) - 1 or idx + 1 in fun.keys():
 					# This is the final instruction, just ignore it
 					yield('')
+				elif lastProgEnd is not None and lastProgEnd == idx - 1:
+					# Minor case: ignore 2nd endprogram in a row
+					pass
 				else:
 					# This is a return out of the program block
 					yield(ind('return{};'.format(' '+reg[-1] if len(reg) else '')))
+					lastProgEnd = idx
 
 			elif name == 'exit':
 				yield(ind('exit;'))

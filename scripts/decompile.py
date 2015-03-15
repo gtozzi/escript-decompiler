@@ -665,6 +665,9 @@ class ECLFile:
 			elif name == 'dict':
 				reg.append(Dict())
 
+			elif name == 'stack':
+				reg.append(Stack())
+
 			elif name == 'consume':
 				r = reg.pop()
 				yield(ind('{};'.format(r)))
@@ -1128,11 +1131,18 @@ class Struct(Array):
 			return 'struct'
 		return super().__str__()
 
-class Dict(Struct):
+class Dict(Array):
 	''' Utility class to represent a dictionary '''
 	def __str__(self):
 		if not len(self):
 			return 'dictionary'
+		return super().__str__()
+
+class Stack(Array):
+	''' Utility class to represent a stack '''
+	def __str__(self):
+		if not len(self):
+			return 'stack'
 		return super().__str__()
 
 class Iterator():
@@ -1342,7 +1352,7 @@ class Instruction():
 		'INS_CALL_METHOD',                                         # 59 0x3b
 
 		'TOK_DICTIONARY',                                          # 60 0x3c
-		'TOK_STACK',
+		'TOK_STACK',                                               # 61 0x3d
 		'INS_INITFOR',                                             # 62 0x3e
 		'INS_NEXTFOR',                                             # 63 0x3f
 
@@ -1662,6 +1672,10 @@ class Instruction():
 		elif self.id == 0x3c:
 			info['name'] = 'dict'
 			desc = 'dict start'
+
+		elif self.id == 0x3d:
+			info['name'] = 'stack'
+			desc = 'stack start'
 
 		else:
 			desc = ''

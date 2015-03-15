@@ -318,6 +318,8 @@ class ECLFile:
 		# Utility functions and vars
 		ops = {
 			':=': 50,
+			'&&': 45,
+			'||': 45,
 			'=':  40,
 			'>=': 40,
 			'>':  40,
@@ -325,8 +327,6 @@ class ECLFile:
 			'<':  40,
 			'!=': 40,
 			'in': 40,
-			'&&': 30,
-			'||': 30,
 			'&':  26,
 			'^':  24,
 			'|':  22,
@@ -356,7 +356,7 @@ class ECLFile:
 			return parms
 		def enclose(left, op, right):
 			''' add parenthesys if needed '''
-			exRe = re.compile('\(.*\)')
+			exRe = re.compile('\(.*?\)')
 			left = str(left)
 			right = str(right)
 

@@ -690,20 +690,29 @@ class ECLFile:
 			elif name == 'goto':
 				# A goto may be part of an if block or of a loop (for/while)
 				# proceed with some logical analysis and guessing
+				def formattedBreak(info):
+					''' Outputs a break statement with label, if needed '''
+					jumps = 0
+					for b in reversed(blk):
+						if b.type in ('for','foreach','case','while','repeat') and hasattr(b,'end') and b.end is not None and info['to'] > b.end:
+							jumps += 1
+					if jumps > 0:
+						return(ind('break outOf{}{};'.format(blk[0-jumps-1].type.capitalize(), len(blk)-jumps-1)))
+					return(ind('break;'))
+				toDescr, toInfo = self.instr[info['to']].parse(self.const, self.usages)
 				if info['cond'] is not None and info['to'] > idx:
 					# Conditional forward jump starts an if or while section
 					# Expect to find an unconditional jump at to-1. This jump leads
 					# to the end of the "if section" on an if block or back to the
 					# block definition in a while block
 					op = '! ' if info['cond'] else ''
-					to = self.instr[info['to']-1]
-					toDescr, toInfo = to.parse(self.const, self.usages)
+					toDescrP, toInfoP = self.instr[info['to']-1].parse(self.const, self.usages)
 					elseInstr = None
 					end = info['to']
-					if toInfo['name'] == 'goto' and toInfo['cond'] is None:
+					if toInfoP['name'] == 'goto' and toInfoP['cond'] is None:
 						# This could be the "else" statement on an if or the jump back
 						# on a while
-						if toInfo['to'] > info['to']:
+						if toInfoP['to'] > info['to']:
 							# Jumping forward: this could be an else statement
 							obstacle = False
 							forOpen = 0
@@ -711,13 +720,13 @@ class ECLFile:
 								# Safety check: don't confuse an else with a break
 								# an else jump sould be inside the end of any parent block
 								try:
-									if b.end is not None and ( toInfo['to'] > b.end or toInfo['to'] == b.end and b.type != 'if' ):
+									if b.end is not None and ( toInfoP['to'] > b.end or toInfoP['to'] == b.end and b.type != 'if' ):
 										obstacle = True
 										break
 								except AttributeError:
 									continue
 							if not obstacle:
-								for i in range(info['to'], toInfo['to']):
+								for i in range(info['to'], toInfoP['to']):
 									# Safety check: don't confuse an else with a break out of foreach
 									ide, iin = self.instr[i].parse(self.const, self.usages)
 									if iin['name'] == 'foreach':
@@ -730,15 +739,14 @@ class ECLFile:
 											break
 							if not obstacle:
 								# Safety check: jump leading exactly to a step foreach is a continue
-								ide, iin = self.instr[toInfo['to']].parse(self.const, self.usages)
+								ide, iin = self.instr[toInfoP['to']].parse(self.const, self.usages)
 								if iin['name'] == 'foreach' and iin['act'] == 'step':
 									obstacle = True
 							if not obstacle:
 								elseInstr = info['to'] - 1
-								gd, gi = to.parse(self.const, self.usages)
-								end = gi['to']
+								end = toInfoP['to']
 							typ = 'if'
-						elif toInfo['to'] <= idx and ( not blk or toInfo['to'] > blk[-1].start ):
+						elif toInfoP['to'] <= idx and ( not blk or toInfoP['to'] > blk[-1].start ):
 							# Jumping backward but not too much
 							# this could be the endwhile statement
 							typ = 'while'
@@ -782,15 +790,14 @@ class ECLFile:
 					yield(ind('continue;'))
 				elif info['cond'] is None and blk and hasattr(blk[-1],'end') and blk[-1].end is not None and info['to'] > blk[-1].end:
 					# Jumps forward after current block end, should be a "break" statement
-					ide, iin = self.instr[info['to']].parse(self.const, self.usages)
-					if iin['name'] == 'foreach' and iin['act'] == 'step':
+					if toInfo['name'] == 'foreach' and toInfo['act'] == 'step':
 						# Jumpt exactly on a foreach step statement, should be a "continue" instead
 						yield(ind('continue;'))
 					else:
-						yield(ind('break;'))
+						yield formattedBreak(info)
 				elif info['cond'] is None and blk and blk[-1].type == 'case':
 					# This should be a "break" statement for a case block
-					yield(ind('break;'))
+					yield formattedBreak(info)
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
 
@@ -924,6 +931,7 @@ class ECLFile:
 		elseRe = re.compile('^(?P<ind>\s*)else$')
 		ifRe = re.compile('^(?P<ind>\s*)if\( (?P<cond>.*) \)$')
 		endifRe = re.compile('^(?P<ind>\s*)endif$')
+		breakLabRe = re.compile('^(?P<ind>\s*)break outOf(?P<what>[A-Z][a-z]+)(?P<liv>[0-9]+);$')
 
 		i = -1
 		for line in src:
@@ -1036,6 +1044,28 @@ class ECLFile:
 			return ret
 
 		ret = ifElseToElseIf(ret)
+
+		# Place labels for jumps out of blocks
+		src = ret[:]
+		done = set()
+		for i in range(0,len(src)):
+			line = ret[i]
+			m = breakLabRe.match(line)
+			if m:
+				what = m.group('what').lower()
+				liv = int(m.group('liv'))
+				s = (what, liv)
+				if s in done:
+					continue
+				done.add(s)
+				myRe = re.compile('^\s{'+str(liv)+'}'+what+'.*$')
+				for k in range(i-1,-1,-1):
+					if myRe.match(ret[k]):
+						ret.insert(k, '{}outOf{}{}:'.format('\t'*liv, what.capitalize(), liv))
+						ret.insert(k, '')
+						break
+				else:
+					raise RuntimeError('Couldn\'t place label before {}'.format(myRe))
 
 		return ret
 

@@ -702,8 +702,9 @@ class ECLFile:
 				def formattedBreak(info):
 					''' Outputs a break statement with label, if needed '''
 					broke = None
-					for b in list(reversed(blk))[1:]:
-						if b.type in ('for','foreach','while','repeat') and hasattr(b,'end') and b.end is not None and info['to'] >= b.end:
+					breakable = [ b for b in reversed(blk) if b.type in ('for','foreach','case','while','repeat') ]
+					for b in breakable[1:]:
+						if hasattr(b,'end') and b.end is not None and info['to'] >= b.end:
 							broke = b
 					if broke:
 						return(ind('break outOf{}{};'.format(broke.type.capitalize(), blk.index(broke))))

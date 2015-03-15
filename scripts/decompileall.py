@@ -64,7 +64,7 @@ if __name__ == '__main__':
 
 		out = tempfile.NamedTemporaryFile('wb', prefix='decompileall_', suffix='.src', delete=False)
 		for line in src:
-			out.write((line + os.linesep).encode('utf8'))
+			out.write((line + os.linesep).encode(decompile.ENCODING))
 		out.close()
 
 		path = subprocess.check_output(['winepath', '-w', out.name]).decode().strip()

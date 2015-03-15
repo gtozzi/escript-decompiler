@@ -12,6 +12,9 @@ import collections
 import re
 
 
+ENCODING = 'iso8859-15'
+
+
 def parseInt(val):
 	''' Parses an int in binary format. First byte is the least significant
 	
@@ -53,10 +56,10 @@ def parseStr(val, fixed=False):
 		else:
 			break
 	try:
-		return ret.decode('utf8')
+		return ret.decode(ENCODING)
 	except UnicodeDecodeError:
-		logging.warning('String with non utf8 encoding: %s', ret)
-		return ret.decode('iso8859-15')
+		logging.warning('String with non %s encoding: %s', ENCODING, ret)
+		raise ValueError('Unkown encoding')
 
 
 class ECLFile:
@@ -1857,7 +1860,7 @@ if __name__ == '__main__':
 			if args.dump:
 				print(l)
 			if args.check:
-				origf.write((l + os.linesep).encode('utf8'))
+				origf.write((l + os.linesep).encode(ENCODING))
 		if args.check:
 			origf.close()
 
@@ -1874,7 +1877,7 @@ if __name__ == '__main__':
 				if args.optimized:
 					print(l)
 				if args.check:
-					decf.write((l + os.linesep).encode('utf8'))
+					decf.write((l + os.linesep).encode(ENCODING))
 		if args.check:
 			decf.close()
 
@@ -1891,7 +1894,7 @@ if __name__ == '__main__':
 		e = decf.name[:-4] + '.ecl'
 		eclc = ECLFile(e)
 		for l in eclc.dump():
-			newf.write((l + os.linesep).encode('utf8'))
+			newf.write((l + os.linesep).encode(ENCODING))
 		newf.close()
 		os.unlink(e)
 

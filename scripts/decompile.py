@@ -475,7 +475,7 @@ class ECLFile:
 					if i == idx:
 						if v is None:
 							c = 'default'
-							if blk[-1].end is None and idx != blk[-1].start + 1:
+							if blk[-1].end is None and idx != blk[-1].start + 1 and idx == max(blk[-1].cases.values()):
 								# Case probably ends here
 								del blk[-1]
 								yield(ind('endcase'))
@@ -852,7 +852,7 @@ class ECLFile:
 					except IndexError:
 						self.log.warning('0x%04X: unable to consume index %s', idx, i)
 
-				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program', 'function', 'repeat'):
+				if len(blk) and blk[-1].type in ('while', 'if', 'foreach', 'program', 'function', 'repeat', 'case'):
 					# Do not end blocks ended automatically
 					pass
 				elif len(blk):

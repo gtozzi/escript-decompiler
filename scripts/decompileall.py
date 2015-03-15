@@ -80,7 +80,9 @@ if __name__ == '__main__':
 				continue
 
 		cmpf = out.name[:-4] + '.ecl'
-		if not filecmp.cmp(binf, cmpf):
+		same = filecmp.cmp(binf, cmpf)
+		os.unlink(cmpf)
+		if not same:
 			if args.halt:
 				print('DIFF ERROR')
 				sys.exit(1)

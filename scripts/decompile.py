@@ -1797,7 +1797,7 @@ if __name__ == '__main__':
 		path = subprocess.check_output(('winepath', '-w', decf.name)).decode().strip()
 		cmd = 'wine "' + os.path.join('scripts','ecompile.exe') + '" "' + path + '"'
 		ret = subprocess.call(cmd, shell=True)
-		#os.unlink(decf.name)
+		os.unlink(decf.name)
 		if ret:
 			print('Compilation failed')
 			sys.exit(1)
@@ -1811,3 +1811,6 @@ if __name__ == '__main__':
 
 		cmd = ('kdiff3', origf.name, newf.name)
 		subprocess.call(cmd)
+
+		os.unlink(origf.name)
+		os.unlink(newf.name)

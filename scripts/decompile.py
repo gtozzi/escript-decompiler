@@ -643,6 +643,9 @@ class ECLFile:
 			elif name == 'struct':
 				reg.append(Struct())
 
+			elif name == 'dict':
+				reg.append(Dict())
+
 			elif name == 'consume':
 				r = reg.pop()
 				yield(ind('{};'.format(r)))
@@ -1068,6 +1071,13 @@ class Struct(Array):
 			return 'struct'
 		return super().__str__()
 
+class Dict(Struct):
+	''' Utility class to represent a dictionary '''
+	def __str__(self):
+		if not len(self):
+			return 'dictionary'
+		return super().__str__()
+
 class Iterator():
 	''' This represents an iterator '''
 	def __init__(self, depth):
@@ -1274,7 +1284,7 @@ class Instruction():
 
 		'INS_CALL_METHOD',                                         # 59 0x3b
 
-		'TOK_DICTIONARY',
+		'TOK_DICTIONARY',                                          # 60 0x3c
 		'TOK_STACK',
 		'INS_INITFOR',                                             # 62 0x3e
 		'INS_NEXTFOR',                                             # 63 0x3f
@@ -1591,6 +1601,10 @@ class Instruction():
 		elif self.id == 0x47:
 			info['name'] = 'struct'
 			desc = 'struct start'
+
+		elif self.id == 0x3c:
+			info['name'] = 'dict'
+			desc = 'dict start'
 
 		else:
 			desc = ''

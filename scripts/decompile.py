@@ -1566,7 +1566,7 @@ class Instruction():
 
 		elif self.id == 0x37:
 			info['name'] = 'case'
-			info['cases'] = collections.OrderedDict()
+			info['cases'] = SwitchCases()
 			i = self.offset
 			while True:
 				idx = const.getShort(i)
@@ -1646,6 +1646,27 @@ class Instruction():
 	def __repr__(self):
 		hx = ' '.join(['{:02X}'.format(c) for c in self.raw])
 		return hx + ' - ' + '{:>6s}'.format(self.TOKENS[self.id])
+
+
+class SwitchCases():
+	''' Like an OrderedDict, but support duplicated cases (-.-) '''
+	def __init__(self):
+		self.keys = []
+		self.vals = []
+	def __setitem__(self, key, val):
+		self.keys.append(key)
+		self.vals.append(val)
+	def __len__(self):
+		return len(self.keys)
+	def keys(self):
+		return self.keys
+	def values(self):
+		return self.vals
+	def items(self):
+		ret = []
+		for i in range(0,len(self.keys)):
+			ret.append( (self.keys[i], self.vals[i]) )
+		return ret
 
 
 class ConstantsSection(Section):

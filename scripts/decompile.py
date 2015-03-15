@@ -1902,10 +1902,12 @@ if __name__ == '__main__':
 		path = subprocess.check_output(('winepath', '-w', decf.name)).decode().strip()
 		cmd = 'wine "' + os.path.join('scripts','ecompile.exe') + '" "' + path + '"'
 		ret = subprocess.call(cmd, shell=True)
-		os.unlink(decf.name)
 		if ret:
 			print('Compilation failed')
+			cmd = ('kate', decf.name)
+			subprocess.call(cmd)
 			sys.exit(1)
+		os.unlink(decf.name)
 
 		newf = tempfile.NamedTemporaryFile(prefix='DUMP_', suffix='_DEC.txt', delete=False)
 		e = decf.name[:-4] + '.ecl'

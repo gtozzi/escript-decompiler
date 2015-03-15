@@ -798,7 +798,7 @@ class ECLFile:
 						yield(ind('continue;'))
 					else:
 						yield formattedBreak(info)
-				elif info['cond'] is None and blk and blk[-1].type == 'case':
+				elif info['cond'] is None and blk and 'case' in map(lambda i: i.type, blk):
 					# This should be a "break" statement for a case block
 					yield formattedBreak(info)
 				else:
@@ -894,6 +894,7 @@ class ECLFile:
 				self.log.error('0x%04X: unimplemented instruction %s', idx, inst)
 
 
+			self.log.info("0x%04X: %s (%s)", idx, desc, info)
 			self.log.debug("0x%04X: %s, W: %s", idx, desc, reg)
 
 			idx += 1
@@ -1840,12 +1841,18 @@ if __name__ == '__main__':
 	parser.add_argument('-d', '--dump', action='store_true', help='Dump disassembled program')
 	parser.add_argument('-s', '--source', action='store_true', help='Dump disassembled source')
 	parser.add_argument('-o', '--optimized', action='store_true', help='Dump optimized source')
-	parser.add_argument('-v', '--verbose', action='store_true', help='Show debug output')
+	parser.add_argument('-v', '--verbose', action='count', help='Increase output verbosity')
 	parser.add_argument('-c', '--check', action='store_true', help='Check and compare the output')
 	args = parser.parse_args()
 
 	log = logging.getLogger()
-	log.setLevel(logging.DEBUG if args.verbose else logging.INFO)
+	if not args.verbose:
+		lvl = logging.WARNING
+	elif args.verbose == 1:
+		lvl = logging.INFO
+	elif args.verbose >= 2:
+		lvl = logging.DEBUG
+	log.setLevel(lvl)
 	ch = logging.StreamHandler()
 	fmt = LogFormatter("%(levelname)s:%(name)s:%(message)s")
 	ch.setFormatter(fmt)

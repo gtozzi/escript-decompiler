@@ -341,7 +341,9 @@ class ECLFile:
 			return '"{}"'.format(string.replace('"', '\\"'))
 		def unquote(string):
 			''' removes quotes from a quoted string '''
-			return string[1:-1].replace('\\"', '"')
+			if string[0] == '"' and string[-1] == '"':
+				return string[1:-1].replace('\\"', '"')
+			return string
 		def getParms(num):
 			''' retrieves num params from W '''
 			parms = []

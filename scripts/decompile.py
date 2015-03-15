@@ -811,6 +811,9 @@ class ECLFile:
 				elif info['cond'] is None and blk and len([x for x in map(lambda i: i.type, blk) if x in ('case','foreach')]):
 					# This should be a "break" statement for a case or foreach block
 					yield formattedBreak(info)
+				elif info['cond'] is None and blk and blk[-1].type == 'if' and info['to'] == idx + 1:
+					# This should be an empty "else" statement that has not been detected
+					yield(ind('else',-1))
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])
 

@@ -566,7 +566,12 @@ class ECLFile:
 				if info['var'] and info['scope'] == 'global':
 					v = glo[info['id']]
 				elif info['var'] and info['scope'] == 'local':
-					v = blk[-1].vars[info['id']]
+					try:
+						v = blk[-1].vars[info['id']]
+					except IndexError:
+						#FIXME: really :)
+						self.log.warning('0x%04X: var %s has not been declared, using last one instead', info['id'])
+						v = blk[-1].vars[-1]
 				elif info['type'] == 'str':
 					v = quote(info['val'])
 				elif info['type'] in ('int','double'):

@@ -473,6 +473,7 @@ class ECLFile:
 				# Output case statement if needed
 				for v, i in blk[-1].cases.items():
 					if i == idx:
+						blk[-1].resetVars()
 						if v is None:
 							c = 'default'
 							if blk[-1].end is None and idx != blk[-1].start + 1 and idx == max(blk[-1].cases.values()):

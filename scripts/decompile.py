@@ -502,12 +502,14 @@ class ECLFile:
 						yield(ind('{}:'.format(c),-1))
 						lastCase = idx
 
-			if blk and blk[-1].type == 'case':
+			while blk and blk[-1].type == 'case':
 				# Output endcase when end reached
 				if blk[-1].end is not None and blk[-1].end == idx:
 					del blk[-1]
 					yield(ind('endcase'))
 					lastCase = None
+				else:
+					break
 
 			# End if sections if needed (check again after eventually ending some case blocks)
 			# FIXME: avoid duplicated code

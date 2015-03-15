@@ -378,7 +378,7 @@ class ECLFile:
 			''' add parenthesys if any operator is detected inside the string '''
 			if not isinstance(val, str):
 				return val
-			for o in ops:
+			for o in list(ops.keys()) + ['.']:
 				if val.find(o) != -1:
 					return '({})'.format(val)
 			return val
@@ -543,7 +543,7 @@ class ECLFile:
 
 			elif name == 'method':
 				parms = getParms(info['parm'])
-				r = reg.pop()
+				r = encloseAny(reg.pop())
 				reg.append('{}.{}({})'.format(r, info['method'], ', '.join([str(p) for p in parms])))
 
 			elif name == 'makelocal':
@@ -585,11 +585,8 @@ class ECLFile:
 					yield(ind("{};".format(res)))
 				elif info['op'] == '.':
 					# Access a property
-					for o in ops.keys():
-						if r.find(o) != -1:
-							r = '({})'.format(r)
-							break
-					else:
+					r = encloseAny(r)
+					if r[0] != '(':
 						r = unquote(r)
 					res = '{}.{}'.format(l, r)
 				elif info['op'] in ('+', '-', '*', '/', '%'):

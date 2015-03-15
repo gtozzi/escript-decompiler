@@ -409,6 +409,7 @@ class ECLFile:
 		progParms = None # Will contain parameters for program block until they are outputted
 		curFunc = None # Will contain parameters for user function block until outputted
 		progStarted = False # Will be true when program block has been started
+		lastCase = None # Will store when last "case" statement has been printed
 
 		while idx < len(self.instr):
 			inst = self.instr[idx]
@@ -451,17 +452,12 @@ class ECLFile:
 				progStarted = True
 
 			if idx in fun.keys():
-				# New function starts here
-				if len(blk) and blk[-1].type == 'function':
-					# Close the previous function
+				# Close any opened block and start the function
+				for i in range(0,len(blk)):
+					yield(ind('end{}'.format(blk[-1].type), -1))
+					if blk[-1].type in ('program', 'function'):
+						yield('')
 					del blk[-1]
-					yield(ind('endfunction'))
-					yield('')
-				elif len(blk) and blk[-1].type == 'program':
-					# Close the program block
-					del blk[-1]
-					yield(ind('endprogram'))
-					yield('')
 				curFunc = fun[idx]
 				curFunc['parms'] = []
 				blk.append(Block('function', None, idx))
@@ -486,7 +482,13 @@ class ECLFile:
 								continue
 							elif blk[-1].end == idx:
 								# Don't output empty default case at the end of the block
-								continue
+								ide, iin = self.instr[idx-1].parse(self.const, self.usages)
+								if iin['name'] == 'goto' and iin['cond'] is None and iin['to'] == idx and lastCase != idx:
+									# There is an empty case at the end of the case block and no
+									# case statemente has still been outputted yet
+									pass
+								else:
+									continue
 						elif isinstance(v, int):
 							c = v
 						elif isinstance(v, str):
@@ -494,12 +496,20 @@ class ECLFile:
 						else:
 							raise RuntimeError('Unexpected type {} for case'.format(type(v)))
 						yield(ind('{}:'.format(c),-1))
+						lastCase = idx
 
 			if blk and blk[-1].type == 'case':
 				# Output endcase when end reached
 				if blk[-1].end is not None and blk[-1].end == idx:
 					del blk[-1]
 					yield(ind('endcase'))
+					lastCase = None
+
+			# End if sections if needed (check again after eventually ending some case blocks)
+			# FIXME: avoid duplicated code
+			while blk and blk[-1].type == 'if' and blk[-1].end == idx:
+				del blk[-1]
+				yield(ind('endif'))
 
 			if idx in rep.keys():
 				# Starts repeat...ultil block if needed
@@ -1808,6 +1818,7 @@ if __name__ == '__main__':
 		for l in eclc.dump():
 			newf.write((l + os.linesep).encode('utf8'))
 		newf.close()
+		os.unlink(e)
 
 		cmd = ('kdiff3', origf.name, newf.name)
 		subprocess.call(cmd)

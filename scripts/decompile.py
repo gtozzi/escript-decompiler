@@ -808,8 +808,8 @@ class ECLFile:
 						yield(ind('continue;'))
 					else:
 						yield formattedBreak(info)
-				elif info['cond'] is None and blk and 'case' in map(lambda i: i.type, blk):
-					# This should be a "break" statement for a case block
+				elif info['cond'] is None and blk and len([x for x in map(lambda i: i.type, blk) if x in ('case','foreach')]):
+					# This should be a "break" statement for a case or foreach block
 					yield formattedBreak(info)
 				else:
 					self.log.error('0x%04X: unimplemented goto (block: %s)', idx, blk[-1])

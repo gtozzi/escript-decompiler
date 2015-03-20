@@ -830,12 +830,13 @@ class ECLFile:
 					reg.append(str(it))
 					l = reg[-1]
 					r = reg[-2]
-					if r.find(']') != -1 or r.find('[') != -1:
-						r = '({})'.format(r)
-					for o in list(ops.keys()) + ['.']:
-						if r.find(o) != -1:
-							r = '( {} )'.format(r)
-							break;
+					if isinstance(r, str):
+						if r.find(']') != -1 or r.find('[') != -1:
+							r = '({})'.format(r)
+						for o in list(ops.keys()) + ['.']:
+							if r.find(o) != -1:
+								r = '( {} )'.format(r)
+								break;
 					yield(ind('foreach {} in {}'.format(l, r)))
 					blk.append(b)
 				elif info['act'] == 'step':

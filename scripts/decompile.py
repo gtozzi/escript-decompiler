@@ -165,9 +165,19 @@ class ECLFile:
 		if header[:2] != b'CE':
 			raise ParseError('This is not a valid eScript file, wrong magic number')
 		self.version = parseInt(header[2:4])
-		if self.version != 2:
-			raise ParseError('This is not a POL093 eScript file, wrong version number {}'.format(header[2]))
 		self.globals = parseInt(header[4:])
+
+	def getVersionDescr(self):
+		if self.version < 2:
+			return 'POL<093'
+		elif self.version == 2:
+			return 'POL093'
+		elif self.version < 12:
+			return 'POL>093<099'
+		elif self.version == 12:
+			return 'POL099'
+		else:
+			return 'POL>099'
 
 	def getNextSection(self):
 		''' Scans the buffer and returns next section '''
@@ -181,7 +191,9 @@ class ECLFile:
 
 		if size == 0 and code == 1:
 			# Section code 1 doesn't specify a size, go read it from section's data
-			size = 13 + int(self.buf[self.pos+6+9]) * 34
+			nameLen = UsageSection.nameLenForVersion(self.version)
+			numFuncs = parseInt(self.buf[self.pos+6+nameLen : self.pos+6+nameLen+4])
+			size = nameLen + 4 + numFuncs * 34
 			self.log.info('Deduced size of %d bytes for the section', size)
 		elif code == 1 and size != 0:
 			raise ParseError('Unsupported section code 1 with a given size')
@@ -194,7 +206,7 @@ class ECLFile:
 		self.log.debug('Raw section data: %s', data)
 
 		if code == 1:
-			return UsageSection(data)
+			return UsageSection(data, self.version)
 		elif code == 2:
 			return InstructionsSection(data)
 		elif code == 3:
@@ -211,7 +223,7 @@ class ECLFile:
 		@return list of lines
 		'''
 		yield('*** HEADER ***')
-		yield('ECL version {}'.format(self.version))
+		yield('ECL version {} ({})'.format(self.version, self.versionDescr()))
 		yield('{} global{}'.format(self.globals, 's' if self.globals != 1 else ''))
 		yield('')
 
@@ -228,8 +240,12 @@ class ECLFile:
 			yield('')
 
 		yield('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
-		for idx, ir in enumerate(self.instr.instr):
-			yield('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
+		if self.version == 2:
+			for idx, ir in enumerate(self.instr.instr):
+				yield('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
+		else:
+			for idx, ir in enumerate(self.instr.instr):
+				yield('0x{:04X}'.format(idx))
 		yield('')
 
 		yield('*** CONSTANTS ***')
@@ -246,6 +262,9 @@ class ECLFile:
 		''' Try to build back the source code for the script
 		@return list of lines
 		'''
+
+		if self.version != 2:
+			raise NotImplementedError('Source decompilation only works for POL093 eScript files, wrong version number: {}'.format(header[2]))
 
 		# Analyze exported functions
 		fun = {} # {start idx: {'name', 'args', 'export'}}
@@ -1196,20 +1215,31 @@ class Section:
 class UsageSection(Section):
 	''' A section type 01: "use" directive '''
 
-	def __init__(self, data):
+	def __init__(self, data, version):
 		super().__init__(1, data)
-		self.name = parseStr(data[:9], True)
-		funcCount = int(data[9])
-		if data[10:12] != b'\x00\x00':
-			raise ParseError('Unexpected data in bytes 11-13 of section: %s', data[10:12])
+		nameLen = UsageSection.nameLenForVersion(version)
+		self.name = parseStr(data[:nameLen], True)
+		funcCount = parseInt(data[nameLen:nameLen+4])
 		self.func = []
 		for i in range(0,funcCount):
-			f = data[13+i*34 : 13+i*34+34]
+			f = data[nameLen+4+i*34 : nameLen+4+i*34+34]
 			self.func.append(UsageSectionFunction(f))
 		self.log.debug('New usage section %s, functions: %s', self.name, self.func)
 
 	def __str__(self):
 		return self.name + ' [' + ', '.join([str(i) for i in self.func]) + ']'
+
+	@staticmethod
+	def nameLenForVersion(version):
+		''' Given an ECL version number, returns the name length '''
+		if version == 2:
+			#POL093
+			return 9
+		elif version == 12:
+			# POL099
+			return 14
+		else:
+			raise NotImplementedError("Unknown name len for ECL version {}".format(version))
 
 class UsageSectionFunction():
 	''' A function inside and usage section '''

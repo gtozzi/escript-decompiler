@@ -28,6 +28,7 @@ import logging
 import string
 import collections
 import re
+from enum import Enum
 
 
 ENCODING = 'iso8859-15'
@@ -165,19 +166,9 @@ class ECLFile:
 		if header[:2] != b'CE':
 			raise ParseError('This is not a valid eScript file, wrong magic number')
 		self.version = parseInt(header[2:4])
+		if self.version != 5:
+			raise ParseError('This is not a POL093 eScript file, wrong version number {}'.format(header[2]))
 		self.globals = parseInt(header[4:])
-
-	def getVersionDescr(self):
-		if self.version < 2:
-			return 'POL<093'
-		elif self.version == 2:
-			return 'POL093'
-		elif self.version < 12:
-			return 'POL>093<099'
-		elif self.version == 12:
-			return 'POL099'
-		else:
-			return 'POL>099'
 
 	def getNextSection(self):
 		''' Scans the buffer and returns next section '''
@@ -191,9 +182,7 @@ class ECLFile:
 
 		if size == 0 and code == 1:
 			# Section code 1 doesn't specify a size, go read it from section's data
-			nameLen = UsageSection.nameLenForVersion(self.version)
-			numFuncs = parseInt(self.buf[self.pos+6+nameLen : self.pos+6+nameLen+4])
-			size = nameLen + 4 + numFuncs * 34
+			size = 13 + int(self.buf[self.pos+6+9]) * 34
 			self.log.info('Deduced size of %d bytes for the section', size)
 		elif code == 1 and size != 0:
 			raise ParseError('Unsupported section code 1 with a given size')
@@ -206,7 +195,7 @@ class ECLFile:
 		self.log.debug('Raw section data: %s', data)
 
 		if code == 1:
-			return UsageSection(data, self.version)
+			return UsageSection(data)
 		elif code == 2:
 			return InstructionsSection(data)
 		elif code == 3:
@@ -223,7 +212,7 @@ class ECLFile:
 		@return list of lines
 		'''
 		yield('*** HEADER ***')
-		yield('ECL version {} ({})'.format(self.version, self.versionDescr()))
+		yield('ECL version {}'.format(self.version))
 		yield('{} global{}'.format(self.globals, 's' if self.globals != 1 else ''))
 		yield('')
 
@@ -240,12 +229,8 @@ class ECLFile:
 			yield('')
 
 		yield('*** {} INSTRUCTIONS ***'.format(len(self.instr)))
-		if self.version == 2:
-			for idx, ir in enumerate(self.instr.instr):
-				yield('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
-		else:
-			for idx, ir in enumerate(self.instr.instr):
-				yield('0x{:04X}'.format(idx))
+		for idx, ir in enumerate(self.instr.instr):
+			yield('0x{:04X}'.format(idx) + ' - ' + ir.descr(self.const, self.usages))
 		yield('')
 
 		yield('*** CONSTANTS ***')
@@ -262,9 +247,6 @@ class ECLFile:
 		''' Try to build back the source code for the script
 		@return list of lines
 		'''
-
-		if self.version != 2:
-			raise NotImplementedError('Source decompilation only works for POL093 eScript files, wrong version number: {}'.format(header[2]))
 
 		# Analyze exported functions
 		fun = {} # {start idx: {'name', 'args', 'export'}}
@@ -357,7 +339,7 @@ class ECLFile:
 			':=': 50,
 			'&&': 45,
 			'||': 45,
-			'=':  40,
+			'==':  40,
 			'>=': 40,
 			'>':  40,
 			'<=': 40,
@@ -455,10 +437,11 @@ class ECLFile:
 		lastCase = None # Will store when last "case" statement has been printed
 		lastProgEnd = None # Last endprogram found
 
+
 		while idx < len(self.instr):
 			inst = self.instr[idx]
 			desc, info = inst.parse(self.const, self.usages)
-
+			#print(inst.descr(self.const, self.usages))
 			# End if sections if needed
 			while blk and blk[-1].type == 'if' and blk[-1].end == idx:
 				del blk[-1]
@@ -566,7 +549,7 @@ class ECLFile:
 				yield(ind('repeat'))
 				blk.append(b)
 
-
+			#print(name)
 			if name == 'getarg':
 				if not len(blk) or blk[-1].type != 'program':
 					# Auto-starting program block
@@ -593,6 +576,19 @@ class ECLFile:
 				r = encloseAny(reg.pop())
 				reg.append('{}.{}({})'.format(r, info['method'], ', '.join([str(p) for p in parms])))
 
+			elif name == 'getmember':
+				r = encloseAny(reg.pop())
+				reg.append('{}.{}'.format(r, info['member']))
+			
+			elif name == 'setmember':
+				r = reg.pop()
+				l = reg.pop()
+				res = '{}.{} := {}'.format(l, info['member'], r)
+				if info['consume']:
+					yield ind(res + ';')
+				else:
+					reg.append(res)
+			
 			elif name == 'makelocal':
 				# "Prepare" parameters for next function call, try to just ignore it
 				# and do all the job on the call
@@ -629,8 +625,9 @@ class ECLFile:
 				reg.append(v)
 
 			elif name == 'assign':
-				r = reg.pop()
-				l = reg.pop()
+				if info['op'] != '[x][x]':
+					r = reg.pop()
+					l = reg.pop()
 
 				if info['op'] == ':=':
 					# Assign left
@@ -657,16 +654,16 @@ class ECLFile:
 					# Logical: and, or
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
-				elif info['op'] in ('=', '!=', '<','<=','>','>=', 'in'):
+				elif info['op'] in ('==', '!=', '<','<=','>','>=', 'in'):
 					# Comparison: equal, not equal, lesser than, lesser or equal than,
 					#             greater than, greater or equal than, in array
 					l, r = enclose(l, info['op'], r)
 					res = '{} {} {}'.format(l, info['op'], r)
 				elif info['op'] == '[]':
 					# Array subscription
-					if info['idx'] == 0:
+					if info['idx'] == 1:
 						res = '{}[{}]'.format(l, r)
-					elif info['idx'] > 0:
+					elif info['idx'] != 0:
 						if not l.endswith(']'):
 							self.log.critical('0x%04X: multiple subscription on a non-array %s', idx, info)
 						res = '{},{}]'.format(l[:-1], r)
@@ -675,10 +672,34 @@ class ECLFile:
 				elif info['op'] in ('.+', '.-'):
 					# Array add member, array del member
 					res = '{}{}{}'.format(l, info['op'], unquote(r))
+				elif info['op'] == '[x]':
+					x = reg.pop()
+					res = '{}[{}] := {}'.format(x, l, r)
+				elif info['op'] == '[x][x]':
+					r = reg.pop()
+					subs = []
+					for i in range(info['count']):
+						subs.append(reg.pop())
+					subs.reverse()
+					l = reg.pop()
+					res = '{}[{}] := {}'.format(l,
+					','.join( subs), r)
 				else:
 					self.log.error('0x%04X: unimplemented assign %s', idx, info['op'])
-				reg.append(res)
+				if info['consume']:
+					yield ind(res+';')
+				else:
+					reg.append(res)
 
+			elif name == 'assign_consume':
+				r = reg.pop()
+				
+				if info['scope']=='local':
+					l = blk[-1].vars[info['id']]
+				else:
+					l = glo[info['id']]
+				res = '{} := {}'.format(l, r)
+				yield(ind('{};'.format(res)))
 			elif name == 'unary':
 				r = reg.pop()
 				if info['op'] in ('+','-','!'):
@@ -693,6 +714,15 @@ class ECLFile:
 				elif info['act'] == 'append':
 					val = reg.pop()
 					reg[-1].append(val)
+				elif info['act'] == '[x][x]':
+					subs = []
+					for i in range(info['count']):
+						subs.append(reg.pop())
+					subs.reverse()
+					l = reg.pop()
+					res = '{}[{}]'.format(l,
+					','.join( subs))
+					reg.append(res)
 				else:
 					self.log.error('0x%04X: unimplemented array %s', idx, info['act'])
 
@@ -729,8 +759,8 @@ class ECLFile:
 					blk[-1].vars.append(name)
 				else:
 					self.log.error('0x%04X: unimplemented var', idx)
-				reg.append(name)
-				yield(ind('var {}{};'.format(name, ' array' if array else '')))
+				reg.append('var '+name)
+				#yield(ind('var {}{};'.format(name, ' array' if array else '')))
 
 			elif name == 'vararr':
 				# Ignore it now because it has already been processed by var
@@ -835,6 +865,7 @@ class ECLFile:
 						blk[-1].end = info['to']
 					elif blk[-1].end != info['to']:
 						self.log.error('0x%04X: unexpected case goto (block: %s)', idx, blk[-1])
+					yield(ind('break;'))
 				elif info['cond'] is None and blk and info['to'] < blk[-1].start:
 					# Jumps backwards before current block start, should be a "continue" statement
 					yield(ind('continue;'))
@@ -1215,31 +1246,20 @@ class Section:
 class UsageSection(Section):
 	''' A section type 01: "use" directive '''
 
-	def __init__(self, data, version):
+	def __init__(self, data):
 		super().__init__(1, data)
-		nameLen = UsageSection.nameLenForVersion(version)
-		self.name = parseStr(data[:nameLen], True)
-		funcCount = parseInt(data[nameLen:nameLen+4])
+		self.name = parseStr(data[:9], True)
+		funcCount = int(data[9])
+		if data[10:12] != b'\x00\x00':
+			raise ParseError('Unexpected data in bytes 11-13 of section: %s', data[10:12])
 		self.func = []
 		for i in range(0,funcCount):
-			f = data[nameLen+4+i*34 : nameLen+4+i*34+34]
+			f = data[13+i*34 : 13+i*34+34]
 			self.func.append(UsageSectionFunction(f))
 		self.log.debug('New usage section %s, functions: %s', self.name, self.func)
 
 	def __str__(self):
 		return self.name + ' [' + ', '.join([str(i) for i in self.func]) + ']'
-
-	@staticmethod
-	def nameLenForVersion(version):
-		''' Given an ECL version number, returns the name length '''
-		if version == 2:
-			#POL093
-			return 9
-		elif version == 12:
-			# POL099
-			return 14
-		else:
-			raise NotImplementedError("Unknown name len for ECL version {}".format(version))
 
 class UsageSectionFunction():
 	''' A function inside and usage section '''
@@ -1288,7 +1308,7 @@ class Instruction():
 		'TYP_LEFTBRACKET',
 		'TYP_RIGHTBRACKET',
 
-		'TYP_TESTMAX', # = TYP_RIGHTBRACKET,
+		#'TYP_TESTMAX' = TYP_RIGHTBRACKET,
 
 		'TYP_RESERVED',
 
@@ -1312,7 +1332,7 @@ class Instruction():
 
 	# Possible values for 2nd byte "id", from tokens.h
 	# (commenting out additions for POL099)
-	# Comment blocks on the right idicates verified values
+	# Comment blocks on the right idicates verified values	
 	TOKENS = (
 		'TOK_LONG',                                                #  0 0x00
 		'TOK_DOUBLE',
@@ -1328,16 +1348,16 @@ class Instruction():
 		'TOK_ASSIGN',                                              #  8 0x08
 		'INS_ASSIGN_CONSUME',
 
-		'TOK_PLUSEQUAL',
+		'TOK_PLUSEQUAL',#10
 		'TOK_MINUSEQUAL',
-		#'TOK_TIMESEQUAL',
-		#'TOK_DIVIDEEQUAL',
+		'TOK_TIMESEQUAL',
+		'TOK_DIVIDEEQUAL',
 		#'TOK_MODULUSEQUAL',
-		'TOK_INSERTINTO',
+		#'TOK_INSERTINTO',
 
 		# comparison operators
 		'TOK_LESSTHAN',                                            # 13 0x0d
-		'TOK_LESSEQ',
+		'TOK_LESSEQ',#15
 		'TOK_GRTHAN',
 		'TOK_GREQ',
 
@@ -1345,14 +1365,14 @@ class Instruction():
 		'TOK_OR',
 
 		# equalite/inequality operators
-		'TOK_EQUAL',                                               # 19 0x13
+		'TOK_EQUAL',                 #20                              # 19 0x13
 		'TOK_NEQ',
 
 		# unary operators
 		'TOK_UNPLUS',
 		'TOK_UNMINUS',
 		'TOK_LOG_NOT',                                             # 23 0x17
-		'TOK_BITWISE_NOT',
+		'TOK_BITWISE_NOT',#25
 
 		'TOK_CONSUMER',                                            # 25 0x19
 
@@ -1361,15 +1381,15 @@ class Instruction():
 		'TOK_ADDMEMBER',                                           # 27 0x1b
 		'TOK_DELMEMBER',
 
-		'???', # Fllling an hole
+		#'???', # Fllling an hole
 
-		'TOK_CHKMEMBER',                                           # 30 0x1e
+		'TOK_CHKMEMBER',     #30                                      # 30 0x1e
 
 		'CTRL_STATEMENTBEGIN',
 		'CTRL_PROGEND',                                            # 32 0x20
 		'CTRL_MAKELOCAL',
 		'CTRL_JSR_USERFUNC',
-		'INS_POP_PARAM',
+		'INS_POP_PARAM',#35
 		'CTRL_LEAVE_BLOCK', # offset is number of variables to remove
 
 		'RSV_JMPIFFALSE',                                          # 37 0x25
@@ -1383,22 +1403,22 @@ class Instruction():
 		'RSV_GLOBAL',                                              # 43 0x2b
 		'RSV_VAR',
 
-		'RSV_FUNCTION',
+		'RSV_FUNCTION',#45
 
 		'INS_DECLARE_ARRAY',                                       # 46 0x2e
 
 		'TOK_FUNC',                                                # 47 0x2f
 		'TOK_USERFUNC',
 		'TOK_ERROR',                                               # 49 0x31
-		'TOK_IN',
+		'TOK_IN',#50
 		'TOK_LOCALVAR',
 		'TOK_GLOBALVAR',
 		'INS_INITFOREACH',                                         # 53 0x35
 		'INS_STEPFOREACH',
-		'INS_CASEJMP',
+		'INS_CASEJMP',#55
 		'INS_GET_ARG',                                             # 56 0x38
 
-		'TOK_ARRAY_APPEND', # Just guessing
+		'INS_PLUSEQUAL', # Just guessing
 		'TOK_ARRAY',                                               # 58 0x3a
 
 		'INS_CALL_METHOD',                                         # 59 0x3b
@@ -1408,49 +1428,271 @@ class Instruction():
 		'INS_INITFOR',                                             # 62 0x3e
 		'INS_NEXTFOR',                                             # 63 0x3f
 
-		'???', # Fllling an hole
+	#	'???', # Fllling an hole
 
 		'TOK_REFTO',                                               # 65 0x41
-		'INS_POP_PARAM_BYREF',                                     # 66 0x42
+		'INS_POP_PARAM_BYREF',  #65                                   # 66 0x42
 		'TOK_MODULUS',                                             # 67 0x43
 
-		#'TOK_BSLEFT',
-		#'TOK_BSRIGHT',
+		'TOK_BSLEFT',
+		'TOK_BSRIGHT',
 		'TOK_BITAND',
-		'TOK_BITOR',
+		'TOK_BITOR',#70
 		'TOK_BITXOR',                                              # 70 0x46
 
-		'TOK_STRUCT',                                              # 71 0x47
+		'TOK_STRUCT',                                            # 71 0x47
 		'INS_SUBSCRIPT_ASSIGN',
 		'INS_SUBSCRIPT_ASSIGN_CONSUME',
-		'INS_MULTISUBSCRIPT',
+		'INS_MULTISUBSCRIPT',#75
 		'INS_MULTISUBSCRIPT_ASSIGN',
 		'INS_ASSIGN_LOCALVAR',
 		'INS_ASSIGN_GLOBALVAR',
 
 		'INS_GET_MEMBER',
-		'INS_SET_MEMBER',
+		'INS_SET_MEMBER',#80
 		'INS_SET_MEMBER_CONSUME',
 
 		'INS_ADDMEMBER2',
 		'INS_ADDMEMBER_ASSIGN',
 		'INS_UNINIT',
-		'INS_DICTIONARY_ADDMEMBER',
+		'INS_DICTIONARY_ADDMEMBER',#85
 
 		'INS_GET_MEMBER_ID',
 		'INS_SET_MEMBER_ID',
 		'INS_SET_MEMBER_ID_CONSUME',
 		'INS_CALL_METHOD_ID',
 
-		'TOK_EQUAL1',
+		'TOK_EQUAL1',#90
 
-		'INS_SET_MEMBER_ID_CONSUME_PLUSEQUAL',
-		'INS_SET_MEMBER_ID_CONSUME_MINUSEQUAL',
-		'INS_SET_MEMBER_ID_CONSUME_TIMESEQUAL',
-		'INS_SET_MEMBER_ID_CONSUME_DIVIDEEQUAL',
-		'INS_SET_MEMBER_ID_CONSUME_MODULUSEQUAL',
+	#	'INS_SET_MEMBER_ID_CONSUME_PLUSEQUAL',
+	#	'INS_SET_MEMBER_ID_CONSUME_MINUSEQUAL',
+	#	'INS_SET_MEMBER_ID_CONSUME_TIMESEQUAL',
+	#	'INS_SET_MEMBER_ID_CONSUME_DIVIDEEQUAL',
+	#	'INS_SET_MEMBER_ID_CONSUME_MODULUSEQUAL',
 	)
 
+	MEMBERS =(
+      "x",
+      "y",
+      "z",
+      "name",
+      "objtype",
+      "graphic",
+      "serial",
+      "color",
+      "height",
+      "facing",
+      "dirty",
+      "weight",
+      "multi",
+      "amount",
+      "layer",
+      "container",
+      "usescript",
+      "equipscript",
+      "unequipscript",
+      "desc",
+      "movable",
+      "invisible",
+      "decayat",
+      "sellprice",
+      "buyprice",
+      "newbie",
+      "item_count",
+      "warmode",
+      "gender",
+      "trueobjtype",
+      "truecolor",
+      "ar_mod",
+      "hidden",
+      "concealed",
+      "frozen",
+      "paralyzed",
+      "poisoned",
+      "stealthsteps",
+      "squelched",
+      "dead",
+      "ar",
+      "backpack",
+      "weapon",
+      "acctname",
+      "acct",
+      "cmdlevel",
+      "cmdlevelstr",
+      "criminal",
+      "ip",
+      "gold",
+      "title_prefix",
+      "title_suffix",
+      "title_guild",
+      "title_race",
+      "guildid",
+      "guild",
+      "murderer",
+      "attached",
+      "clientversion",
+      "reportables",
+      "script",
+      "npctemplate",
+      "master",
+      "process",
+      "eventmask",
+      "speech_color",
+      "speech_font",
+      "use_adjustments",
+      "run_speed",
+      "locked",
+      "corpsetype",
+      "tillerman",
+      "portplank",
+      "starboardplank",
+      "hold",
+      "has_offline_mobiles",
+      "components",
+      "items",
+      "mobiles",
+      "xeast",
+      "xwest",
+      "ynorth",
+      "ysouth",
+      "gumpwidth",
+      "gumpheight",
+      "isopen",
+      "quality",
+      "hp",
+      "maxhp_mod",
+      "maxhp",
+      "dmg_mod",
+      "attribute",
+	  "intrinsic",
+      "hitscript",
+      "ar_base",
+      "onhitscript",
+      "enabled",
+      "banned",
+      "passwordhash",
+      "usernamepasswordhash",
+      "members",
+      "allyguilds",
+      "enemyguilds",
+      "pid",
+      "state",
+      "instr_cycles",
+      "sleep_cycles",
+      "consec_cycles",
+      "pc",
+      "call_depth",
+      "num_globals",
+      "var_size",
+	  "realm",
+	  "uo_expansion",
+	  "custom",
+      "globals",
+	  "footprint",
+      "clientinfo",
+      "delay_mod",
+      "createdat",
+	  "opponent",
+	  "connected",
+	  "attached_to",
+	  "controller",
+	  "ownerserial",
+	  "defaultcmdlevel",
+	  "uclang",
+      "race")
+
+	METHODS = (
+      "isa",
+      "set_member",
+      "get_member",
+      "setpoisoned",
+      "setparalyzed",
+      "setcrminial",
+      "setlightlevel",
+      "squelch",
+      "enable",
+      "disable",
+      "enabled",
+      "setcmdlevel",
+      "spendgold",
+      "setmurderer",
+      "removereportable",
+      "getgottenitem",
+      "cleargottenitem",
+      "setwarmode",
+      "setmaster",
+      "move_offline_mobles",
+      "setcustom",
+      "getpins",
+      "insertpin",
+      "appendpin",
+      "erasepin",
+       "open",
+      "close",
+      "toggle",
+      "ban",
+      "unban",
+      "setpassword",
+      "checkpassword",
+      "setname",
+      "getcharacter",
+      "deletecharacter",
+      "getprop",
+      "setprop",
+      "eraseprop",
+      "propnames",
+      "ismember",
+      "isallyguild",
+      "isenemyguild",
+      "addmember",
+      "addallyguild",
+      "addenemyguild",
+      "removemember",
+      "removeallyguild",
+      "removeenemyguild",
+      "size",
+      "erase",
+      "insert",
+      "shrink",
+      "append",
+      "reverse",
+      "sort",
+      "exists",
+      "keys",
+      "sendpacket",
+      "sendareapacket",
+      "getint8",
+      "getint16",
+      "getint32",
+      "setint8",
+      "setint16",
+      "setint32",
+      "getstring",
+      "getunicodestring",
+      "setstring",
+      "setunicodestring",
+      "getsize",
+      "setsize",
+      "createelement",
+      "findelement",
+      "deleteelement",
+      "sendevent",
+      "kill",
+      "loadsymbols",
+	  "set_uo_expansion",
+      "clear_event_queue",
+	  "add_component",
+	  "erase_component",
+      "delete",
+      "split",
+      "move_char",
+      "getint16flipped",
+      "getint32flipped",
+      "setint16flipped",
+      "setint32flipped",
+	  "getcorpse",
+	  "setdefaultcmdlevel"
+)
 	def __init__(self, data):
 		self.log = logging.getLogger('instr')
 		if len(data) != 5:
@@ -1480,9 +1722,12 @@ class Instruction():
 			info['func'] = info['usage'].func[fid]
 			desc = '{name} {usage.name}:{func}'.format(**info)
 
-		elif self.id == 0x3b:
+		elif self.id in (0x3b,89):
 			info['name'] = 'method'
-			info['method'] = const.getStr(self.offset)
+			if self.id == 0x3b:
+				info['method'] = const.getStr(self.offset)
+			else:
+				info['method'] = self.METHODS[self.offset]
 			info['parm'] = self.type
 			desc = 'L := R.{method}()'.format(**info)
 
@@ -1540,8 +1785,9 @@ class Instruction():
 			info['arg'] = const.getStr(self.offset)
 			desc = '{name} {arg}'.format(**info)
 
-		elif self.id in (0x04,0x05,0x06,0x07, 0x08, 0x0d,0x0e,0x0f,0x10, 0x11,0x12, 0x13,0x14, 0x1a,0x1b,0x1c, 0x1e, 0x32, 0x42, 0x43, 0x44,0x45,0x46):
+		elif self.id in (0x04,0x05,0x06,0x07, 0x08,9,14,15,16,17,18,19,20,21, 27,28,29, 0x1e, 0x32, 0x40, 0x42, 69,70,71,73,74,76):
 			info['name'] = 'assign'
+			info['consume'] = False
 			space = True
 			if self.id == 0x04:
 				info['op'] = '+'
@@ -1554,34 +1800,36 @@ class Instruction():
 
 			elif self.id == 0x08:
 				info['op'] = ':='
-
-			elif self.id == 0x0d:
+			elif self.id == 9:
+				info['op'] = ':='
+				info['consume'] = True
+			elif self.id == 14:
 				info['op'] = '<'
-			elif self.id == 0x0e:
+			elif self.id == 15:
 				info['op'] = '<='
-			elif self.id == 0x0f:
+			elif self.id == 16:
 				info['op'] = '>'
-			elif self.id == 0x10:
+			elif self.id == 17:
 				info['op'] = '>='
 
-			elif self.id == 0x11:
+			elif self.id == 18:
 				info['op'] = '&&'
-			elif self.id == 0x12:
+			elif self.id == 19:
 				info['op'] = '||'
 
-			elif self.id == 0x13:
-				info['op'] = '='
-			elif self.id == 0x14:
+			elif self.id == 20:
+				info['op'] = '=='
+			elif self.id == 21:
 				info['op'] = '!='
 
-			elif self.id == 0x1a:
+			elif self.id == 27:
 				info['op'] = '[]'
 				info['idx'] = self.offset
 				space = False
-			elif self.id == 0x1b:
+			elif self.id == 28:
 				info['op'] = '.+'
 				space = False
-			elif self.id == 0x1c:
+			elif self.id == 29:
 				info['op'] = '.-'
 				space = False
 
@@ -1592,40 +1840,47 @@ class Instruction():
 			elif self.id == 0x32:
 				info['op'] = 'in'
 
-			elif self.id == 0x42:
+			elif self.id == 0x40:
 				info['op'] = ':=&'
 
-			elif self.id == 0x43:
+			elif self.id == 0x42:
 				info['op'] = '%'
 
-			elif self.id == 0x44:
+			elif self.id == 69:
 				info['op'] = '&'
-			elif self.id == 0x45:
+			elif self.id == 70:
 				info['op'] = '|'
-			elif self.id == 0x46:
+			elif self.id == 71:
 				info['op'] = '^'
-
+			elif self.id == 73:
+				info['op'] = '[x]'
+			elif self.id == 74:
+				info['op'] = '[x]'
+				info['consume'] = True
+			elif self.id == 76:
+				info['op'] = '[x][x]'
+				info['count'] = self.offset
 			desc = '{name} L := L{s}{op}{s}R'.format(name=info['name'], op=info['op'], s=' ' if space else '')
 
-		elif self.id in (0x15,0x16,0x17):
+		elif self.id in (22,23,24):
 			info['name'] = 'unary'
-			if self.id == 0x15:
+			if self.id == 22:
 				info['op'] = '+'
-			if self.id == 0x16:
+			if self.id == 23:
 				info['op'] = '-'
-			if self.id == 0x17:
+			if self.id == 24:
 				info['op'] = '!'
 			desc = '{name} R := {op} R'.format(**info)
 
-		elif self.id == 0x19:
+		elif self.id == 26:
 			info['name'] = 'consume'
 			desc = 'consume R'
 
-		elif self.id in (0x2a, 0x2b):
+		elif self.id in (42, 43):
 			info['name'] = 'var'
-			if self.id == 0x2b:
+			if self.id == 43:
 				scope = 'global'
-			elif self.id == 0x2a:
+			elif self.id == 42:
 				scope = 'local'
 			info['scope'] = scope
 			info['id'] = self.offset
@@ -1709,15 +1964,19 @@ class Instruction():
 			info['name'] = 'exit'
 			desc = 'exit'
 
-		elif self.id in (0x39, 0x3a):
+		elif self.id in (0x39, 0x3a,75):
 			info['name'] = 'array'
 			if self.id == 0x39:
 				info['act'] = 'append'
 			elif self.id == 0x3a:
 				info['act'] = 'start'
+			elif self.id == 75:
+				info['act'] = '[x][x]'
+				info['count'] = self.offset
+
 			desc = '{name} {act}'.format(**info)
 
-		elif self.id == 0x47:
+		elif self.id == 72:
 			info['name'] = 'struct'
 			desc = 'struct start'
 
@@ -1729,6 +1988,32 @@ class Instruction():
 			info['name'] = 'stack'
 			desc = 'stack start'
 
+		elif self.id in (77, 78):
+			info['name'] = 'assign_consume'
+			if self.id == 78:
+				scope = 'global'
+			elif self.id == 77:
+				scope = 'local'
+			info['scope'] = scope
+			info['id'] = self.offset
+			desc = '{name} {scope} #{id}'.format(**info)
+		elif self.id in (79, 86):
+			info['name'] = 'getmember'
+			if self.id == 79:
+				info['member'] = const.getStr(self.offset)
+			elif self.id == 86:
+			  info['member'] = self.MEMBERS[self.offset]
+			desc = 'getMember('+info['member']+')'
+		elif self.id in (80, 81,87,88):
+			info['name'] = 'setmember'
+			info['consume'] = False
+			if self.id in (80,81):
+				info['member'] = const.getStr(self.offset)
+			elif self.id in (87,88):
+			  info['member'] = self.MEMBERS[self.offset]
+			if self.id in (81,88):
+				info['consume'] = True
+			desc = 'setMember('+info['member']+')'
 		else:
 			desc = ''
 

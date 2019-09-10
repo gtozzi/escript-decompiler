@@ -223,7 +223,7 @@ class ECLFile:
 		@return list of lines
 		'''
 		yield('*** HEADER ***')
-		yield('ECL version {} ({})'.format(self.version, self.versionDescr()))
+		yield('ECL version {} ({})'.format(self.version, self.getVersionDescr()))
 		yield('{} global{}'.format(self.globals, 's' if self.globals != 1 else ''))
 		yield('')
 
